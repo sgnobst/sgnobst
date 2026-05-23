@@ -2,16 +2,13 @@ package com.sgnobst.aigotchi
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
@@ -30,37 +27,32 @@ class GameView(context: Context) : View(context) {
     private val game = GameState()
     private var screen: Screen = Screen.INTRO
 
+    private val kit = StyleKit()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Palette.TEXT_HI; textSize = 36f; typeface = Typeface.DEFAULT_BOLD
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
     }
-    private val small = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Palette.TEXT_LO; textSize = 26f
-    }
-    private val tiny = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Palette.TEXT_LO; textSize = 22f
-    }
-    private val emoji = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; textSize = 48f
-    }
-    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f }
 
     private val hits = mutableListOf<Pair<RectF, () -> Unit>>()
-    private val worldHits = mutableListOf<Triple<Float, Float, () -> Unit>>() // x, y, action (radius=hit)
+    private val worldHits = mutableListOf<Triple<Float, Float, () -> Unit>>()
 
     // Anim state
     private var tSec = 0f
     private var lastMs = System.currentTimeMillis()
     private var aiBob = 0f
-    private var aiBlinkT = 0f
     private var blinkActive = false
-    private val shake = Shake()
+    private var blinkT = 1.5f
+    private var shakeAmt = 0f
     private var flashA = 0f
     private var flashColor = Color.WHITE
     private val displayStats = FloatArray(8) { 30f }
     private var displayMoney = 100f
     private var dayProgress = 0f
     private val DAY_SECONDS = 45f
+    private var pressedHitIdx = -1
+    private var pressedDecay = 0f
 
     // World objects
     private val coins = mutableListOf<Coin>()
@@ -71,12 +63,13 @@ class GameView(context: Context) : View(context) {
     private var coinTimer = 4f
     private var catTimer = 12f
     private var glitchTimer = 8f
-    private var albaTickTimer = 1f
     private var newsScroll = 0f
     private var speechT = 0f
     private var speechText: String = ""
-    private val stars = List(60) { Star(Random.nextFloat(), Random.nextFloat()*0.42f, Random.nextFloat()) }
-    private val grid = GridFloor()
+
+    // Decoration: floating clouds
+    private data class Cloud(var x: Float, val y: Float, val sz: Float, val speed: Float)
+    private val clouds = mutableListOf<Cloud>()
 
     private val prefs: SharedPreferences = context.getSharedPreferences("aigotchi", Context.MODE_PRIVATE)
 
@@ -100,26 +93,48 @@ class GameView(context: Context) : View(context) {
         ticker.post(frame)
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        kit.setScale(w)
+        // spawn clouds
+        clouds.clear()
+        for (i in 0..4) {
+            clouds.add(Cloud(
+                Random.nextFloat() * w,
+                h * (0.05f + Random.nextFloat() * 0.18f),
+                kit.sz(40f + Random.nextFloat() * 30f),
+                10f + Random.nextFloat() * 15f
+            ))
+        }
+    }
+
     // ───────────────────────── UPDATE ─────────────────────────
 
     private fun update(dt: Float) {
-        shake.decay(dt)
+        if (shakeAmt > 0) shakeAmt = max(0f, shakeAmt - dt * 60f)
         if (flashA > 0) flashA = max(0f, flashA - dt * 3f)
-        // smoothly approach real stats
-        for (i in 0..7) {
-            displayStats[i] += (game.stats[i] - displayStats[i]) * (dt * 5f).coerceAtMost(1f)
+        if (pressedHitIdx >= 0) {
+            pressedDecay -= dt
+            if (pressedDecay <= 0) pressedHitIdx = -1
         }
-        displayMoney += (game.money - displayMoney) * (dt * 5f).coerceAtMost(1f)
-        // ai bobbing
-        aiBob = (sin(tSec * 2.0) * 10.0).toFloat()
-        aiBlinkT -= dt
-        if (aiBlinkT <= 0) {
+        for (i in 0..7) {
+            displayStats[i] += (game.stats[i] - displayStats[i]) * (dt * 6f).coerceAtMost(1f)
+        }
+        displayMoney += (game.money - displayMoney) * (dt * 6f).coerceAtMost(1f)
+        aiBob = (sin(tSec * 2.0) * kit.sz(14f)).toFloat()
+        blinkT -= dt
+        if (blinkT <= 0) {
             blinkActive = !blinkActive
-            aiBlinkT = if (blinkActive) 0.12f else (2.5f + Random.nextFloat() * 3.5f)
+            blinkT = if (blinkActive) 0.12f else (2.5f + Random.nextFloat() * 3.5f)
+        }
+
+        // clouds drift
+        for (cl in clouds) {
+            cl.x += cl.speed * dt
+            if (cl.x - cl.sz > width) cl.x = -cl.sz * 2
         }
 
         if (screen == Screen.PLAY && !game.ended) {
-            // day clock
             dayProgress += dt / DAY_SECONDS
             if (dayProgress >= 1f) {
                 dayProgress = 0f
@@ -127,29 +142,24 @@ class GameView(context: Context) : View(context) {
                 onDayAdvanced()
             }
 
-            // alba tick (one tick = 1 day, but we already tick on nextDay; nothing here)
-
-            // coin spawn
             coinTimer -= dt
             if (coinTimer <= 0) {
                 spawnCoin()
                 val rate = max(1.2f, 4.5f - game.stage * 0.3f - if (game.albaIdx >= 0) 1f else 0f)
                 coinTimer = rate + Random.nextFloat() * 1.5f
             }
-            // cat spawn
             catTimer -= dt
             if (catTimer <= 0) {
                 spawnCat()
                 catTimer = 10f + Random.nextFloat() * 14f
             }
-            // glitch spawn (proportional to instability)
             glitchTimer -= dt
             if (glitchTimer <= 0) {
                 val risk = (100 - game.stats[STAT_STABILITY]) / 100f
                 if (Random.nextFloat() < 0.25f + risk * 0.5f) spawnGlitch()
                 glitchTimer = 6f + Random.nextFloat() * 6f
             }
-            // physics
+
             for (c in coins) {
                 c.y += c.vy * dt
                 c.phase += dt
@@ -161,86 +171,76 @@ class GameView(context: Context) : View(context) {
                 k.bob += dt
                 k.life -= dt
             }
-            cats.removeAll { it.life <= 0 || it.x < -120 || it.x > width + 120 }
+            cats.removeAll { it.life <= 0 || it.x < -kit.sz(150f) || it.x > width + kit.sz(150f) }
             for (g in glitches) {
                 g.x += g.vx * dt
                 g.y += g.vy * dt
                 g.life -= dt
-                if (g.x < 80 || g.x > width - 80) g.vx = -g.vx
-                if (g.y < height*0.5f) g.vy = kotlin.math.abs(g.vy)
-                if (g.y > height - 220) g.vy = -kotlin.math.abs(g.vy)
+                if (g.x < kit.sz(100f) || g.x > width - kit.sz(100f)) g.vx = -g.vx
+                if (g.y < height * 0.25f) g.vy = kotlin.math.abs(g.vy)
+                if (g.y > height * 0.5f) g.vy = -kotlin.math.abs(g.vy)
             }
             glitches.removeAll { it.life <= 0 }
-            // particles & floats
+
             val pi = particles.iterator()
             while (pi.hasNext()) { val p = pi.next(); p.update(dt); if (p.life <= 0) pi.remove() }
             val fi = floats.iterator()
             while (fi.hasNext()) { val f = fi.next(); f.update(dt); if (f.life <= 0) fi.remove() }
-            // speech bubble decay
             if (speechT > 0) speechT -= dt
-            // news scroll
-            newsScroll -= 80f * dt
+            newsScroll -= kit.sz(110f) * dt
         }
     }
 
     private fun onDayAdvanced() {
-        flash(Palette.NEON_CYAN, 0.4f)
-        shake.bump(8f)
-        // pull pending screens
+        flash(Style.SKY_BLUE, 0.35f)
+        shakeAmt = kit.sz(8f)
         if (game.ended) screen = Screen.ENDING
         else if (game.pendingEventIdx >= 0) screen = Screen.EVENT
-        else if (game.pendingTrainingIdx >= 0 && !game.trainingHandled) {
-            // Don't force training, but add hint coin
-            speech("새 하루! ${game.day}일차 시작.")
-        }
         save()
     }
 
     private fun spawnCoin() {
-        val x = 80f + Random.nextFloat() * (width - 160f)
-        val y = -40f
-        val vy = 40f + Random.nextFloat() * 60f
+        val x = kit.sz(80f) + Random.nextFloat() * (width - kit.sz(160f))
+        val y = -kit.sz(40f)
+        val vy = kit.sz(80f) + Random.nextFloat() * kit.sz(80f)
         val v = if (game.tools.contains(Content.TOOL_DATACENTER)) 50
                 else if (game.tools.contains(Content.TOOL_SERVERROOM)) 20
-                else if (game.albaIdx >= 0) 12
-                else 5
+                else if (game.albaIdx >= 0) 12 else 5
         coins.add(Coin(x, y, vy, Random.nextFloat() * 6f, v))
     }
     private fun spawnCat() {
         val fromLeft = Random.nextBoolean()
-        val y = height * 0.55f + Random.nextFloat() * 80f
-        cats.add(CatBlob(if (fromLeft) -100f else width + 100f, y,
-            if (fromLeft) (40f + Random.nextFloat()*30f) else -(40f + Random.nextFloat()*30f),
+        val y = height * 0.48f + Random.nextFloat() * kit.sz(60f)
+        cats.add(CatBlob(
+            if (fromLeft) -kit.sz(120f) else width + kit.sz(120f), y,
+            if (fromLeft) kit.sz(60f) + Random.nextFloat() * kit.sz(30f) else -(kit.sz(60f) + Random.nextFloat() * kit.sz(30f)),
             Random.nextFloat() * 6f))
     }
     private fun spawnGlitch() {
-        val x = 100f + Random.nextFloat() * (width - 200f)
-        val y = height * 0.55f + Random.nextFloat() * 100f
+        val x = kit.sz(120f) + Random.nextFloat() * (width - kit.sz(240f))
+        val y = height * 0.30f + Random.nextFloat() * height * 0.15f
         glitches.add(Glitch(x, y,
-            (Random.nextFloat() - 0.5f) * 200f,
-            (Random.nextFloat() - 0.5f) * 200f,
+            (Random.nextFloat() - 0.5f) * kit.sz(240f),
+            (Random.nextFloat() - 0.5f) * kit.sz(180f),
             1 + (game.stage / 3)))
     }
 
     private fun flash(c: Int, a: Float) { flashA = max(flashA, a); flashColor = c }
 
-    private fun burst(x: Float, y: Float, c: Int, n: Int = 12) {
+    private fun burst(x: Float, y: Float, c: Int, n: Int = 14) {
         repeat(n) {
             val ang = Random.nextFloat() * 2f * PI.toFloat()
-            val speed = 120f + Random.nextFloat() * 200f
-            particles.add(Particle(x, y, cos(ang) * speed, sin(ang) * speed - 60f,
-                0.7f + Random.nextFloat() * 0.5f, 1.2f, c, 5f + Random.nextFloat() * 5f))
+            val speed = kit.sz(140f) + Random.nextFloat() * kit.sz(220f)
+            particles.add(Particle(x, y, cos(ang) * speed, sin(ang) * speed - kit.sz(60f),
+                0.7f + Random.nextFloat() * 0.5f, 1.2f, c, kit.sz(8f) + Random.nextFloat() * kit.sz(6f)))
         }
     }
 
     private fun popText(x: Float, y: Float, t: String, c: Int) {
-        floats.add(FloatText(x, y, t, c))
+        floats.add(FloatText(x, y, t, c, 1.3f, kit.sz(80f)))
     }
 
-    private fun speech(s: String) {
-        speechText = s
-        speechT = 3.5f
-    }
+    private fun speech(s: String) { speechText = s; speechT = 3.5f }
 
     // ───────────────────────── DRAW ─────────────────────────
 
@@ -248,8 +248,12 @@ class GameView(context: Context) : View(context) {
         super.onDraw(canvas)
         hits.clear(); worldHits.clear()
         canvas.save()
-        shake.apply(canvas)
-        drawBackdrop(canvas)
+        if (shakeAmt > 0.1f) {
+            val dx = (Random.nextFloat() - 0.5f) * shakeAmt
+            val dy = (Random.nextFloat() - 0.5f) * shakeAmt
+            canvas.translate(dx, dy)
+        }
+        kit.skyBg(canvas, width.toFloat(), height.toFloat())
         when (screen) {
             Screen.INTRO   -> drawIntro(canvas)
             Screen.PLAY    -> drawPlay(canvas)
@@ -262,7 +266,6 @@ class GameView(context: Context) : View(context) {
             Screen.ENDING  -> drawEnding(canvas)
         }
         canvas.restore()
-        // flash overlay (outside shake)
         if (flashA > 0) {
             paint.color = flashColor
             paint.alpha = (flashA * 200).toInt().coerceAtMost(255)
@@ -271,91 +274,79 @@ class GameView(context: Context) : View(context) {
         }
     }
 
-    private fun drawBackdrop(canvas: Canvas) {
-        val w = width.toFloat(); val h = height.toFloat()
-        // vertical gradient
-        paint.shader = LinearGradient(0f, 0f, 0f, h,
-            intArrayOf(Palette.BG_DEEP, Palette.BG_MID, Palette.BG_TOP, Palette.BG_DEEP),
-            floatArrayOf(0f, 0.35f, 0.6f, 1f),
-            Shader.TileMode.CLAMP)
-        canvas.drawRect(0f, 0f, w, h, paint)
-        paint.shader = null
-        // stars (upper portion)
-        for (s in stars) {
-            val sx = s.x * w
-            val sy = s.y * h
-            val a = 100 + ((sin((tSec * 2.0 + s.z * 5.0).toDouble()) * 80.0).toFloat() + 80f).toInt()
-            paint.color = Palette.TEXT_HI
-            paint.alpha = a.coerceIn(40, 255)
-            canvas.drawCircle(sx, sy, 1.5f + s.z * 1.5f, paint)
-        }
-        paint.alpha = 255
-        // synthwave grid+sun (always visible on PLAY, faded on others)
-        if (screen == Screen.PLAY || screen == Screen.INTRO || screen == Screen.ENDING) {
-            grid.draw(canvas, w, h, tSec, paint)
-        }
-    }
-
     // ───────────────────────── INTRO ─────────────────────────
 
     private fun drawIntro(canvas: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
-        val cx = w / 2f
-        emoji.textAlign = Paint.Align.CENTER
-        emoji.textSize = 140f
-        drawGlowText(canvas, "🤖", cx, h * 0.22f, emoji, Palette.NEON_CYAN, 12f)
+        // sun + clouds
+        kit.sun(canvas, w * 0.82f, h * 0.13f, kit.sz(70f))
+        for (cl in clouds) kit.cloud(canvas, cl.x, cl.y, cl.sz)
 
-        text.textAlign = Paint.Align.CENTER
-        text.color = Palette.TEXT_HI
-        text.textSize = 64f
-        drawGlowText(canvas, "이상한 AI 키우기", cx, h * 0.35f, text, Palette.NEON_PINK, 18f)
+        // title
+        kit.chunkyText(canvas, "이상한", w / 2f, h * 0.22f,
+            Style.TITLE_PX, Style.CORAL, Style.NAVY, Style.OUT_TEXT, Paint.Align.CENTER)
+        kit.chunkyText(canvas, "AI 키우기", w / 2f, h * 0.30f,
+            Style.TITLE_PX, Style.CORAL, Style.NAVY, Style.OUT_TEXT, Paint.Align.CENTER)
 
-        small.textAlign = Paint.Align.CENTER
-        small.color = Palette.NEON_CYAN
-        small.textSize = 28f
-        canvas.drawText("TAMAGOTCHI × IDLE × NEON DREAM", cx, h * 0.40f, small)
+        // floating big AI
+        drawAi(canvas, w / 2f, h * 0.50f + aiBob, kit.sz(180f))
+
+        // tagline lines
+        kit.chunkyText(canvas, "TAMAGOTCHI × IDLE GAME", w / 2f, h * 0.66f,
+            Style.SMALL_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.CENTER)
 
         val lines = arrayOf(
-            "🍔 데이터로 AI 성격 만들기",
-            "🗣️ 칭찬·혼내기로 말투 다듬기",
-            "🛠️ 도구·알바로 진화시키기",
-            "💥 사고 수습이 게임의 절반",
-            "🐱 고양이는 절대 정복 불가"
+            "🍔  데이터를 먹여 성격을 만든다",
+            "🗣️  말 한마디로 운명이 바뀐다",
+            "💰  코인·고양이·글리치를 탭한다",
+            "🐱  고양이는 절대 정복 불가"
         )
-        small.color = Palette.TEXT_HI
-        small.textSize = 30f
         for ((i, l) in lines.withIndex()) {
-            canvas.drawText(l, cx, h * 0.50f + i * 50f, small)
+            kit.chunkyText(canvas, l, w / 2f, h * 0.72f + i * kit.sz(50f),
+                Style.BODY_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.CENTER)
         }
 
-        val r = RectF(cx - 240f, h * 0.80f, cx + 240f, h * 0.80f + 110f)
-        drawNeonButton(canvas, r, "▶  GAME START", Palette.NEON_PINK)
+        val r = RectF(w / 2f - kit.sz(280f), h * 0.88f, w / 2f + kit.sz(280f), h * 0.88f + kit.sz(120f))
+        kit.button(canvas, r, "GAME START", Style.SUN, "▶")
         hits.add(r to {
             screen = Screen.PLAY
             if (game.pendingTrainingIdx < 0 && !game.trainingHandled)
                 game.pendingTrainingIdx = Random.nextInt(Content.TRAINING_PROMPTS.size)
-            speech("안녕하세요! 저를 키워주세요.")
+            speech("안녕! 잘 키워줘!")
             save()
         })
-        text.textAlign = Paint.Align.LEFT
     }
 
-    // ───────────────────────── PLAY (action) ─────────────────────────
+    // ───────────────────────── PLAY ─────────────────────────
 
     private fun drawPlay(canvas: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
-        // top header
-        drawTopBar(canvas, w)
-        // big AI in stage area (around horizon)
+
+        // decoration: sun + clouds in upper sky
+        kit.sun(canvas, w * 0.87f, h * 0.08f, kit.sz(50f))
+        for (cl in clouds) kit.cloud(canvas, cl.x, cl.y, cl.sz)
+
+        // floor
+        val floorY = h * 0.48f
+        kit.floor(canvas, w, floorY, h * 0.62f)
+
+        // stats + actions container (chunky cream panel on bottom half)
+        val statsPanel = RectF(kit.sz(20f), h * 0.62f, w - kit.sz(20f), h * 0.93f)
+        kit.panel(canvas, statsPanel, Style.PANEL_DK, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+
+        // top bar
+        drawTopBar(canvas, w, h)
+
+        // AI character
         val aiCx = w / 2f
-        val aiCy = h * 0.36f + aiBob
-        drawAi(canvas, aiCx, aiCy, 150f)
-        // speech bubble
-        if (speechT > 0 && speechText.isNotEmpty()) drawSpeechBubble(canvas, aiCx, aiCy - 200f, speechText)
-        // tappable AI hit
+        val aiCy = h * 0.32f + aiBob
+        drawAi(canvas, aiCx, aiCy, kit.sz(160f))
+        if (speechT > 0 && speechText.isNotEmpty()) {
+            kit.speech(canvas, aiCx, aiCy - kit.sz(220f), speechText, w - kit.sz(60f))
+        }
         worldHits.add(Triple(aiCx, aiCy, ::onTapAi))
 
-        // world objects
+        // world objects (coins/cats/glitches)
         for (c in coins) drawCoin(canvas, c)
         for (k in cats) drawCat(canvas, k)
         for (g in glitches) drawGlitch(canvas, g)
@@ -363,456 +354,523 @@ class GameView(context: Context) : View(context) {
         for (k in cats) worldHits.add(Triple(k.x, k.y, { onTapCat(k) }))
         for (g in glitches) worldHits.add(Triple(g.x, g.y, { onTapGlitch(g) }))
 
-        // particles & floats on top of world
+        // particles & floats above world but below UI
         for (p in particles) p.draw(canvas, paint)
-        for (f in floats) { text.textAlign = Paint.Align.CENTER; text.textSize = 34f; f.draw(canvas, text) }
+        for (f in floats) {
+            kit.chunkyText(canvas, f.text, f.x, f.y,
+                Style.BODY_PX, f.color, Style.NAVY,
+                Style.OUT_TEXT * (f.life / f.maxLife).coerceIn(0f, 1f),
+                Paint.Align.CENTER)
+        }
 
-        // bottom UI: stats grid + action buttons
-        drawStatPanel(canvas, w, h)
-        drawActionDock(canvas, w, h)
+        // stats inside the panel — 2 cols × 4 rows
+        val pad = kit.sz(28f)
+        val labelW = kit.sz(110f) // reserved on left for label
+        val colGap = kit.sz(36f)
+        val colW = (statsPanel.width() - pad*2 - colGap) / 2f
+        val barH = kit.sz(36f)
+        val rowH = kit.sz(56f)
+        val statTop = statsPanel.top + kit.sz(30f)
+        for (i in 0..7) {
+            val col = i / 4; val row = i % 4
+            val x = statsPanel.left + pad + col * (colW + colGap) + labelW
+            val y = statTop + row * rowH
+            val color = when (i) {
+                STAT_BATTERY -> Style.SUN
+                STAT_COMPUTE -> Style.SKY_BLUE
+                STAT_MEMORY -> Style.LAVENDER
+                STAT_TRUST -> Style.MINT
+                STAT_STABILITY -> Style.SKY_BLUE_DK
+                STAT_CURIOSITY -> Style.PINK
+                STAT_EGO -> Style.CORAL
+                else -> Style.MINT_DK
+            }
+            kit.statBar(canvas, x, y, colW - labelW, barH, displayStats[i], color, STAT_NAMES[i])
+        }
+
+        // tag chips above stats panel (overlap onto floor area)
+        if (game.tags.isNotEmpty()) {
+            var tx = kit.sz(30f)
+            val ty = statsPanel.top - kit.sz(60f)
+            for (t in game.tags) {
+                val lab = "${TAG_ICONS[t]} ${TAG_NAMES[t]}"
+                kit.text.textSize = kit.sz(Style.SMALL_PX)
+                val tw = kit.text.measureText(lab) + kit.sz(36f)
+                kit.pill(canvas, RectF(tx, ty, tx + tw, ty + kit.sz(50f)), lab, Style.LAVENDER)
+                tx += tw + kit.sz(12f)
+                if (tx > w - kit.sz(120f)) break
+            }
+        }
+
+        // action buttons row (below stats panel)
+        val btnTop = statsPanel.bottom + kit.sz(14f)
+        val btnH = kit.sz(110f)
+        val btnPad = kit.sz(14f)
+        val bw = (w - btnPad * 5) / 4f
+        val buttons = listOf(
+            Triple("🍔", "데이터" + if (game.cardsRemaining > 0) " ${game.cardsRemaining}" else "", Style.MINT) to { -> screen = Screen.FEED; save() },
+            Triple("🛠️", "도구", Style.SKY_BLUE) to { -> screen = Screen.SHOP; save() },
+            Triple("💼", if (game.albaIdx >= 0) "알바 ${game.albaTimeLeft}d" else "알바", Style.LAVENDER) to { -> screen = Screen.ALBA; save() },
+            Triple("🏆", "업적", Style.PINK) to { -> screen = Screen.NEWS; save() }
+        )
+        for ((i, b) in buttons.withIndex()) {
+            val (iconLab, action) = b
+            val x = btnPad + i * (bw + btnPad)
+            val r = RectF(x, btnTop, x + bw, btnTop + btnH)
+            val pressed = pressedHitIdx == i
+            kit.button(canvas, r, iconLab.second, iconLab.third, iconLab.first, Style.BUTTON_PX * 0.7f, pressed)
+            val captured = i
+            hits.add(r to {
+                pressedHitIdx = captured; pressedDecay = 0.12f
+                action()
+            })
+        }
+
+        // next-day big button
+        val nextR = RectF(btnPad, btnTop + btnH + kit.sz(14f), w - btnPad, btnTop + btnH + kit.sz(14f) + kit.sz(120f))
+        val canNext = game.pendingTrainingIdx < 0 || game.trainingHandled
+        val label: String; val nextColor: Int; val icon: String
+        when {
+            game.pendingEventIdx >= 0 -> { label = "사고 처리하기!"; nextColor = Style.CORAL; icon = "⚠️" }
+            !canNext -> { label = "훈육 먼저!"; nextColor = Style.SUN; icon = "🗣️" }
+            else -> {
+                val left = (DAY_SECONDS * (1 - dayProgress)).toInt()
+                label = "다음 날  (${left}초 후 자동)"; nextColor = Style.CORAL; icon = "💤"
+            }
+        }
+        val pressedNext = pressedHitIdx == 100
+        kit.button(canvas, nextR, label, nextColor, icon, Style.BUTTON_PX, pressedNext)
+        hits.add(nextR to {
+            pressedHitIdx = 100; pressedDecay = 0.12f
+            if (game.pendingEventIdx >= 0) { screen = Screen.EVENT; save() }
+            else if (game.pendingTrainingIdx >= 0 && !game.trainingHandled) { screen = Screen.TRAIN; save() }
+            else { Logic.nextDay(game); onDayAdvanced() }
+        })
+
+        // news ticker bottom strip
         drawNewsTicker(canvas, w, h)
-
-        // overlays
-        if (game.pendingTrainingIdx >= 0 && !game.trainingHandled) drawTrainHint(canvas, w)
-        if (game.pendingEventIdx >= 0) drawEventHint(canvas, w)
     }
 
-    private fun drawTopBar(canvas: Canvas, w: Float) {
-        // backdrop
-        paint.shader = LinearGradient(0f, 0f, 0f, 130f,
-            intArrayOf(0xCC0A0420.toInt(), 0x880A0420.toInt()),
-            null, Shader.TileMode.CLAMP)
-        canvas.drawRect(0f, 0f, w, 130f, paint); paint.shader = null
-
-        // day progress arc on left
-        val cx = 70f; val cy = 65f; val r = 42f
-        paint.color = Palette.PANEL_DARK
+    private fun drawTopBar(canvas: Canvas, w: Float, h: Float) {
+        // Day badge (left) - chunky circle with progress ring
+        val cx = kit.sz(110f)
+        val cy = kit.sz(110f)
+        val r = kit.sz(78f)
+        // shadow
+        paint.color = Style.SHADOW
+        canvas.drawCircle(cx + kit.sz(6f), cy + kit.sz(10f), r, paint)
+        // base
+        paint.color = Style.CORAL
         canvas.drawCircle(cx, cy, r, paint)
-        glow.color = Palette.NEON_CYAN
-        canvas.drawCircle(cx, cy, r, glow)
-        paint.color = Palette.NEON_CYAN
-        canvas.drawArc(cx - r, cy - r, cx + r, cy + r, -90f, dayProgress * 360f, false,
-            Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 6f; color = Palette.NEON_CYAN })
-        text.color = Palette.TEXT_HI
-        text.textAlign = Paint.Align.CENTER
-        text.textSize = 30f
-        canvas.drawText("D${game.day}", cx, cy + 10f, text)
+        // progress arc (white)
+        stroke.color = Style.PANEL
+        stroke.strokeWidth = kit.sz(10f)
+        canvas.drawArc(cx - r + kit.sz(8f), cy - r + kit.sz(8f),
+                       cx + r - kit.sz(8f), cy + r - kit.sz(8f),
+                       -90f, dayProgress * 360f, false, stroke)
+        // outline
+        stroke.color = Style.NAVY
+        stroke.strokeWidth = kit.sz(Style.OUT_UI)
+        canvas.drawCircle(cx, cy, r, stroke)
+        // text
+        kit.chunkyText(canvas, "DAY", cx, cy - kit.sz(8f),
+                       Style.SMALL_PX, Style.PANEL, Style.NAVY, 3f, Paint.Align.CENTER)
+        kit.chunkyText(canvas, "${game.day}", cx, cy + kit.sz(36f),
+                       Style.BIG_NUM_PX, Style.PANEL, Style.NAVY, 5f, Paint.Align.CENTER)
 
-        // money pill center
-        text.textAlign = Paint.Align.CENTER
-        text.color = Palette.NEON_GOLD
-        text.textSize = 40f
-        val moneyStr = "₩ ${displayMoney.toInt()}"
-        val mw = text.measureText(moneyStr) + 60f
-        val mr = RectF(w/2f - mw/2f, 22f, w/2f + mw/2f, 92f)
-        paint.color = Palette.PANEL_DARK
-        canvas.drawRoundRect(mr, 36f, 36f, paint)
-        glow.color = Palette.NEON_GOLD
-        canvas.drawRoundRect(mr, 36f, 36f, glow)
-        canvas.drawText(moneyStr, w/2f, 72f, text)
+        // Money pill (center)
+        val moneyStr = "${displayMoney.toInt()}"
+        kit.text.textSize = kit.sz(Style.BIG_NUM_PX)
+        val moneyW = kit.text.measureText(moneyStr)
+        val mw = moneyW + kit.sz(180f)
+        val mr = RectF(w/2f - mw/2f, kit.sz(40f), w/2f + mw/2f, kit.sz(180f))
+        kit.panel(canvas, mr, Style.SUN, Style.NAVY, Style.OUT_UI, mr.height()/2f)
+        // coin icon
+        paint.color = Style.SUN_DK
+        canvas.drawCircle(mr.left + kit.sz(60f), mr.centerY(), kit.sz(40f), paint)
+        stroke.color = Style.NAVY
+        stroke.strokeWidth = kit.sz(Style.OUT_UI)
+        canvas.drawCircle(mr.left + kit.sz(60f), mr.centerY(), kit.sz(40f), stroke)
+        kit.chunkyText(canvas, "₩", mr.left + kit.sz(60f), mr.centerY() + kit.sz(18f),
+                       Style.HEADER_PX * 0.7f, Style.PANEL, Style.NAVY, 4f, Paint.Align.CENTER)
+        // amount
+        kit.chunkyText(canvas, moneyStr, mr.left + kit.sz(115f), mr.centerY() + kit.sz(22f),
+                       Style.BIG_NUM_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
 
-        // stage badge right
-        val stageStr = "Lv.${game.stage} ${Content.STAGE_NAMES[game.stage-1]}"
-        small.textSize = 26f
-        small.color = Palette.NEON_PURPLE
-        val sw = small.measureText(stageStr) + 36f
-        val sr = RectF(w - sw - 20f, 28f, w - 20f, 86f)
-        paint.color = Palette.PANEL_DARK
-        canvas.drawRoundRect(sr, 28f, 28f, paint)
-        glow.color = Palette.NEON_PURPLE
-        canvas.drawRoundRect(sr, 28f, 28f, glow)
-        small.textAlign = Paint.Align.CENTER
-        small.color = Palette.TEXT_HI
-        canvas.drawText(stageStr, sr.centerX(), sr.centerY() + 9f, small)
+        // Stage badge (right)
+        val stageStr = "Lv.${game.stage}"
+        val stageNm = Content.STAGE_NAMES[game.stage-1]
+        val sw = kit.sz(220f)
+        val sr = RectF(w - sw - kit.sz(20f), kit.sz(40f), w - kit.sz(20f), kit.sz(180f))
+        kit.panel(canvas, sr, Style.LAVENDER, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+        kit.chunkyText(canvas, stageStr, sr.centerX(), sr.top + kit.sz(54f),
+                       Style.HEADER_PX * 0.8f, Style.PANEL, Style.NAVY, 5f, Paint.Align.CENTER)
+        kit.chunkyText(canvas, stageNm, sr.centerX(), sr.top + kit.sz(108f),
+                       Style.SMALL_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.CENTER)
 
-        // tag chips row under header
-        var tx = 30f
-        val ty = 105f
-        for (t in game.tags) {
-            val lab = "${TAG_ICONS[t]} ${TAG_NAMES[t]}"
-            tiny.textSize = 18f
-            val tw = tiny.measureText(lab) + 22f
-            val tr = RectF(tx, ty, tx + tw, ty + 30f)
-            paint.color = Palette.NEON_PINK
-            paint.alpha = 90
-            canvas.drawRoundRect(tr, 14f, 14f, paint); paint.alpha = 255
-            glow.color = Palette.NEON_PINK
-            canvas.drawRoundRect(tr, 14f, 14f, glow)
-            tiny.color = Palette.TEXT_HI
-            tiny.textAlign = Paint.Align.CENTER
-            canvas.drawText(lab, tr.centerX(), tr.centerY() + 7f, tiny)
-            tx += tw + 8f
-            if (tx > w - 100f) break
+        // Pending alerts on second row
+        var alertX = kit.sz(20f)
+        val alertY = kit.sz(220f)
+        if (game.pendingTrainingIdx >= 0 && !game.trainingHandled) {
+            val lab = "🗣️ 훈육!"
+            kit.text.textSize = kit.sz(Style.BODY_PX)
+            val w_ = kit.text.measureText(lab) + kit.sz(40f)
+            val ar = RectF(alertX, alertY, alertX + w_, alertY + kit.sz(60f))
+            kit.panel(canvas, ar, Style.SUN, Style.NAVY, 4f, ar.height()/2f)
+            kit.chunkyText(canvas, lab, ar.centerX(), ar.centerY() + kit.sz(13f),
+                           Style.BODY_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.CENTER)
+            hits.add(ar to { screen = Screen.TRAIN; save() })
+            alertX += w_ + kit.sz(12f)
         }
-        text.textAlign = Paint.Align.LEFT; small.textAlign = Paint.Align.LEFT
+        if (game.pendingEventIdx >= 0) {
+            val pulse = (sin(tSec * 6.0).toFloat() * 0.15f + 0.85f)
+            val lab = "⚠️ 사고!"
+            kit.text.textSize = kit.sz(Style.BODY_PX)
+            val w_ = kit.text.measureText(lab) + kit.sz(40f)
+            val ar = RectF(alertX, alertY, alertX + w_, alertY + kit.sz(60f))
+            val origScale = pulse
+            paint.color = Style.SHADOW
+            canvas.drawRoundRect(ar.left + kit.sz(6f), ar.top + kit.sz(6f), ar.right + kit.sz(6f), ar.bottom + kit.sz(8f), ar.height()/2f, ar.height()/2f, paint)
+            paint.color = Style.CORAL
+            paint.alpha = (origScale * 255).toInt()
+            canvas.drawRoundRect(ar, ar.height()/2f, ar.height()/2f, paint); paint.alpha = 255
+            stroke.color = Style.NAVY
+            stroke.strokeWidth = kit.sz(4f)
+            canvas.drawRoundRect(ar, ar.height()/2f, ar.height()/2f, stroke)
+            kit.chunkyText(canvas, lab, ar.centerX(), ar.centerY() + kit.sz(13f),
+                           Style.BODY_PX, Style.PANEL, Style.NAVY, 4f, Paint.Align.CENTER)
+            hits.add(ar to { screen = Screen.EVENT; save() })
+        }
     }
 
     private fun drawAi(canvas: Canvas, cx: Float, cy: Float, sz: Float) {
-        // aura
-        val auraColor = when {
-            game.stage >= 9 -> Palette.NEON_GOLD
-            game.stage >= 7 -> Palette.NEON_PURPLE
-            game.stage >= 5 -> Palette.NEON_CYAN
-            game.stage >= 3 -> Palette.NEON_GREEN
-            else -> 0xFF6080FF.toInt()
-        }
-        val pulse = 1f + (sin((tSec * 3.0)).toFloat() * 0.05f)
-        paint.shader = RadialGradient(cx, cy, sz * 2.2f * pulse,
-            intArrayOf(auraColor and 0x00FFFFFF or 0x66000000, auraColor and 0x00FFFFFF),
-            null, Shader.TileMode.CLAMP)
-        canvas.drawCircle(cx, cy, sz * 2.2f * pulse, paint)
-        paint.shader = null
+        val outline = kit.sz(Style.OUT_UI)
+
         // shadow on floor
-        paint.color = 0x55000000
-        canvas.drawOval(cx - sz*0.8f, cy + sz*1.05f, cx + sz*0.8f, cy + sz*1.15f, paint)
+        paint.color = Style.SHADOW
+        canvas.drawOval(cx - sz * 0.85f, cy + sz * 1.05f, cx + sz * 0.85f, cy + sz * 1.20f, paint)
 
-        // body
+        // body color by stage
         val bodyColor = when {
-            game.stage >= 9 -> 0xFFFFE085.toInt()
-            game.stage >= 7 -> 0xFFE0A8FF.toInt()
-            game.stage >= 5 -> 0xFF9EE9F0.toInt()
-            game.stage >= 3 -> 0xFFB8F0BB.toInt()
-            else -> 0xFFD0D8E8.toInt()
+            game.stage >= 9 -> Style.SUN
+            game.stage >= 7 -> Style.LAVENDER
+            game.stage >= 5 -> Style.SKY_BLUE
+            game.stage >= 3 -> Style.MINT
+            else -> 0xFFE8D8C0.toInt()
         }
-        paint.color = bodyColor
-        canvas.drawRoundRect(cx - sz, cy - sz*0.9f, cx + sz, cy + sz*0.9f, 44f, 44f, paint)
-        // body neon outline
-        glow.color = auraColor
-        canvas.drawRoundRect(cx - sz, cy - sz*0.9f, cx + sz, cy + sz*0.9f, 44f, 44f, glow)
+        val bodyShadow = when {
+            game.stage >= 9 -> Style.SUN_DK
+            game.stage >= 7 -> Style.LAVENDER_DK
+            game.stage >= 5 -> Style.SKY_BLUE_DK
+            game.stage >= 3 -> Style.MINT_DK
+            else -> 0xFFB89E80.toInt()
+        }
 
-        // antenna with bobbing tip
-        paint.color = Palette.NEON_PINK
-        canvas.drawRect(cx - 4f, cy - sz*0.9f - 38f, cx + 4f, cy - sz*0.9f, paint)
-        val aTipY = cy - sz*0.9f - 50f + (sin(tSec*4.0).toFloat() * 4f)
-        paint.color = Palette.NEON_GOLD
-        canvas.drawCircle(cx, aTipY, 13f, paint)
-        glow.color = Palette.NEON_GOLD
-        canvas.drawCircle(cx, aTipY, 13f, glow)
+        // body bottom shadow layer for depth
+        paint.color = bodyShadow
+        canvas.drawRoundRect(cx - sz, cy - sz * 0.85f + kit.sz(12f),
+            cx + sz, cy + sz * 0.95f, sz * 0.30f, sz * 0.30f, paint)
+        // body main
+        paint.color = bodyColor
+        canvas.drawRoundRect(cx - sz, cy - sz * 0.85f, cx + sz, cy + sz * 0.88f,
+            sz * 0.30f, sz * 0.30f, paint)
+        // outline
+        stroke.color = Style.NAVY
+        stroke.strokeWidth = outline
+        canvas.drawRoundRect(cx - sz, cy - sz * 0.85f, cx + sz, cy + sz * 0.88f,
+            sz * 0.30f, sz * 0.30f, stroke)
+
+        // antenna
+        paint.color = Style.NAVY
+        canvas.drawRect(cx - kit.sz(7f), cy - sz * 0.85f - kit.sz(50f),
+                        cx + kit.sz(7f), cy - sz * 0.85f, paint)
+        // antenna star
+        val starY = cy - sz * 0.85f - kit.sz(58f) + (sin(tSec * 4.0).toFloat() * kit.sz(4f))
+        drawStar(canvas, cx, starY, kit.sz(22f), kit.sz(10f), Style.SUN, Style.NAVY, outline)
+
+        // cheeks (pink blush)
+        paint.color = 0xFFFFB0B0.toInt()
+        val cheekY = cy + sz * 0.08f
+        canvas.drawCircle(cx - sz * 0.50f, cheekY, sz * 0.10f, paint)
+        canvas.drawCircle(cx + sz * 0.50f, cheekY, sz * 0.10f, paint)
 
         // eyes
-        val eyeY = cy - sz*0.12f
-        val eyeOff = sz * 0.36f
-        paint.color = 0xFF101020.toInt()
+        val eyeY = cy - sz * 0.18f
+        val eyeOff = sz * 0.35f
         if (blinkActive || displayStats[STAT_BATTERY] < 15) {
-            paint.style = Paint.Style.STROKE; paint.strokeWidth = 6f
-            canvas.drawLine(cx - eyeOff - 22f, eyeY, cx - eyeOff + 22f, eyeY, paint)
-            canvas.drawLine(cx + eyeOff - 22f, eyeY, cx + eyeOff + 22f, eyeY, paint)
-            paint.style = Paint.Style.FILL
+            stroke.color = Style.NAVY
+            stroke.strokeWidth = kit.sz(10f)
+            canvas.drawLine(cx - eyeOff - sz * 0.16f, eyeY,
+                            cx - eyeOff + sz * 0.16f, eyeY, stroke)
+            canvas.drawLine(cx + eyeOff - sz * 0.16f, eyeY,
+                            cx + eyeOff + sz * 0.16f, eyeY, stroke)
         } else if (displayStats[STAT_EGO] > 80) {
-            paint.color = Palette.NEON_RED
-            canvas.drawCircle(cx - eyeOff, eyeY, 18f, paint)
-            canvas.drawCircle(cx + eyeOff, eyeY, 18f, paint)
-            paint.color = 0xFFFFFFFF.toInt()
-            canvas.drawCircle(cx - eyeOff + 5, eyeY - 5, 6f, paint)
-            canvas.drawCircle(cx + eyeOff + 5, eyeY - 5, 6f, paint)
+            // angry red eyes
+            paint.color = Style.PANEL
+            canvas.drawCircle(cx - eyeOff, eyeY, sz * 0.18f, paint)
+            canvas.drawCircle(cx + eyeOff, eyeY, sz * 0.18f, paint)
+            stroke.color = Style.NAVY
+            stroke.strokeWidth = outline
+            canvas.drawCircle(cx - eyeOff, eyeY, sz * 0.18f, stroke)
+            canvas.drawCircle(cx + eyeOff, eyeY, sz * 0.18f, stroke)
+            paint.color = Style.CORAL
+            canvas.drawCircle(cx - eyeOff, eyeY + sz * 0.02f, sz * 0.10f, paint)
+            canvas.drawCircle(cx + eyeOff, eyeY + sz * 0.02f, sz * 0.10f, paint)
+            paint.color = Style.PANEL
+            canvas.drawCircle(cx - eyeOff + sz * 0.04f, eyeY - sz * 0.02f, sz * 0.035f, paint)
+            canvas.drawCircle(cx + eyeOff + sz * 0.04f, eyeY - sz * 0.02f, sz * 0.035f, paint)
         } else {
-            paint.color = 0xFF101020.toInt()
-            canvas.drawCircle(cx - eyeOff, eyeY, 16f, paint)
-            canvas.drawCircle(cx + eyeOff, eyeY, 16f, paint)
-            paint.color = 0xFFFFFFFF.toInt()
-            canvas.drawCircle(cx - eyeOff + 4, eyeY - 4, 5f, paint)
-            canvas.drawCircle(cx + eyeOff + 4, eyeY - 4, 5f, paint)
+            // normal big cute eyes
+            paint.color = Style.PANEL
+            canvas.drawCircle(cx - eyeOff, eyeY, sz * 0.19f, paint)
+            canvas.drawCircle(cx + eyeOff, eyeY, sz * 0.19f, paint)
+            stroke.color = Style.NAVY
+            stroke.strokeWidth = outline
+            canvas.drawCircle(cx - eyeOff, eyeY, sz * 0.19f, stroke)
+            canvas.drawCircle(cx + eyeOff, eyeY, sz * 0.19f, stroke)
+            paint.color = Style.NAVY
+            canvas.drawCircle(cx - eyeOff + sz * 0.02f, eyeY + sz * 0.02f, sz * 0.10f, paint)
+            canvas.drawCircle(cx + eyeOff + sz * 0.02f, eyeY + sz * 0.02f, sz * 0.10f, paint)
+            paint.color = Style.PANEL
+            canvas.drawCircle(cx - eyeOff + sz * 0.06f, eyeY - sz * 0.02f, sz * 0.04f, paint)
+            canvas.drawCircle(cx + eyeOff + sz * 0.06f, eyeY - sz * 0.02f, sz * 0.04f, paint)
         }
 
-        // mouth — varies
-        paint.color = 0xFF101020.toInt()
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = 6f
+        // mouth
+        stroke.color = Style.NAVY
+        stroke.strokeWidth = outline
         val mY = cy + sz * 0.32f
         when {
-            displayStats[STAT_EGO] < 20 -> canvas.drawArc(cx - 50f, mY - 30f, cx + 50f, mY + 30f, 0f, 180f, false, paint)
-            displayStats[STAT_ETHICS] < 20 -> canvas.drawLine(cx - 40f, mY, cx + 40f, mY - 25f, paint)
-            game.stats[STAT_EGO] > 80 -> {
-                val open = (sin(tSec*8.0).toFloat() * 8f + 12f)
-                canvas.drawOval(cx - 24f, mY - open, cx + 24f, mY + open, paint)
+            displayStats[STAT_EGO] < 20 -> {
+                // sad
+                canvas.drawArc(cx - sz * 0.20f, mY - sz * 0.06f,
+                               cx + sz * 0.20f, mY + sz * 0.16f, 0f, 180f, false, stroke)
             }
-            else -> canvas.drawArc(cx - 50f, mY - 30f, cx + 50f, mY + 30f, 180f, 180f, false, paint)
+            displayStats[STAT_ETHICS] < 20 -> {
+                // smirk
+                canvas.drawLine(cx - sz * 0.16f, mY, cx + sz * 0.16f, mY - sz * 0.08f, stroke)
+            }
+            game.stats[STAT_EGO] > 80 -> {
+                // open shouting mouth
+                paint.color = Style.NAVY
+                canvas.drawOval(cx - sz * 0.14f, mY - sz * 0.05f,
+                                cx + sz * 0.14f, mY + sz * 0.13f, paint)
+                paint.color = Style.CORAL
+                canvas.drawOval(cx - sz * 0.08f, mY - sz * 0.01f,
+                                cx + sz * 0.08f, mY + sz * 0.09f, paint)
+            }
+            else -> {
+                // happy smile
+                canvas.drawArc(cx - sz * 0.22f, mY - sz * 0.18f,
+                               cx + sz * 0.22f, mY + sz * 0.10f, 0f, 180f, false, stroke)
+            }
         }
-        paint.style = Paint.Style.FILL
 
         // glasses for stage 5+
         if (game.stage >= 5) {
-            paint.color = 0xCC000000.toInt(); paint.style = Paint.Style.STROKE; paint.strokeWidth = 4f
-            canvas.drawCircle(cx - eyeOff, eyeY, 28f, paint)
-            canvas.drawCircle(cx + eyeOff, eyeY, 28f, paint)
-            canvas.drawLine(cx - eyeOff + 26f, eyeY, cx + eyeOff - 26f, eyeY, paint)
-            paint.style = Paint.Style.FILL
+            stroke.color = Style.NAVY
+            stroke.strokeWidth = outline * 0.8f
+            canvas.drawCircle(cx - eyeOff, eyeY, sz * 0.26f, stroke)
+            canvas.drawCircle(cx + eyeOff, eyeY, sz * 0.26f, stroke)
+            canvas.drawLine(cx - eyeOff + sz * 0.24f, eyeY,
+                            cx + eyeOff - sz * 0.24f, eyeY, stroke)
         }
         // bowtie for stage 7+
         if (game.stage >= 7) {
-            paint.color = Palette.NEON_GOLD
-            val bx = cx; val by = cy + sz*0.62f
+            val by = cy + sz * 0.7f
+            paint.color = Style.CORAL
             val p = Path()
-            p.moveTo(bx, by)
-            p.lineTo(bx - 24f, by - 14f); p.lineTo(bx - 24f, by + 14f); p.close()
+            p.moveTo(cx, by)
+            p.lineTo(cx - sz * 0.22f, by - sz * 0.12f)
+            p.lineTo(cx - sz * 0.22f, by + sz * 0.12f); p.close()
             canvas.drawPath(p, paint)
-            p.reset(); p.moveTo(bx, by); p.lineTo(bx + 24f, by - 14f); p.lineTo(bx + 24f, by + 14f); p.close()
+            stroke.color = Style.NAVY; stroke.strokeWidth = outline
+            canvas.drawPath(p, stroke)
+            p.reset()
+            p.moveTo(cx, by)
+            p.lineTo(cx + sz * 0.22f, by - sz * 0.12f)
+            p.lineTo(cx + sz * 0.22f, by + sz * 0.12f); p.close()
+            paint.color = Style.CORAL
             canvas.drawPath(p, paint)
-            paint.color = 0xFF101020.toInt()
-            canvas.drawCircle(bx, by, 6f, paint)
+            canvas.drawPath(p, stroke)
+            paint.color = Style.NAVY
+            canvas.drawCircle(cx, by, sz * 0.06f, paint)
         }
-        // halo for stage 9+
+        // halo
         if (game.stage >= 9) {
-            glow.color = Palette.NEON_GOLD
-            glow.strokeWidth = 5f
-            canvas.drawOval(cx - sz*0.7f, cy - sz*1.4f, cx + sz*0.7f, cy - sz*1.2f, glow)
-            glow.strokeWidth = 3f
+            stroke.color = Style.SUN
+            stroke.strokeWidth = kit.sz(12f)
+            canvas.drawOval(cx - sz * 0.7f, cy - sz * 1.18f, cx + sz * 0.7f, cy - sz * 0.98f, stroke)
+            stroke.color = Style.NAVY
+            stroke.strokeWidth = outline * 0.6f
+            canvas.drawOval(cx - sz * 0.7f, cy - sz * 1.18f, cx + sz * 0.7f, cy - sz * 0.98f, stroke)
         }
         // robot arm
         if (game.tools.contains(Content.TOOL_ROBOTARM)) {
-            paint.color = 0xFF7F88A8.toInt()
-            canvas.drawRect(cx + sz - 8f, cy - 20f, cx + sz + 70f, cy + 14f, paint)
-            paint.color = Palette.NEON_RED
-            canvas.drawCircle(cx + sz + 70f, cy - 3f, 14f, paint)
-            glow.color = Palette.NEON_RED
-            canvas.drawCircle(cx + sz + 70f, cy - 3f, 14f, glow)
+            paint.color = 0xFFC0CCDD.toInt()
+            canvas.drawRect(cx + sz - kit.sz(10f), cy - kit.sz(20f),
+                            cx + sz + kit.sz(90f), cy + kit.sz(20f), paint)
+            stroke.color = Style.NAVY; stroke.strokeWidth = outline * 0.7f
+            canvas.drawRect(cx + sz - kit.sz(10f), cy - kit.sz(20f),
+                            cx + sz + kit.sz(90f), cy + kit.sz(20f), stroke)
+            paint.color = Style.CORAL
+            canvas.drawCircle(cx + sz + kit.sz(90f), cy, kit.sz(20f), paint)
+            canvas.drawCircle(cx + sz + kit.sz(90f), cy, kit.sz(20f), stroke)
         }
-        // RGB LEDs at base
+        // RGB LEDs at body bottom
         if (game.gpuCount >= 1) {
-            val colors = intArrayOf(Palette.NEON_PINK, Palette.NEON_CYAN, Palette.NEON_GREEN, Palette.NEON_GOLD)
-            for (i in 0..(min(3, game.gpuCount-1))) {
+            val colors = intArrayOf(Style.CORAL, Style.MINT, Style.SUN, Style.SKY_BLUE)
+            val n = min(4, game.gpuCount)
+            for (i in 0 until n) {
                 val ph = tSec * 3f + i
                 paint.color = colors[i]
-                paint.alpha = (160 + sin(ph.toDouble()).toFloat() * 80).toInt().coerceIn(60, 255)
-                canvas.drawCircle(cx - sz + 24f + i*26f, cy + sz*0.82f, 9f, paint)
+                paint.alpha = (160 + sin(ph.toDouble()).toFloat() * 80).toInt().coerceIn(100, 255)
+                canvas.drawCircle(cx - sz * 0.6f + i * sz * 0.3f, cy + sz * 0.78f, sz * 0.05f, paint)
             }
             paint.alpha = 255
         }
     }
 
+    private fun drawStar(canvas: Canvas, cx: Float, cy: Float, outer: Float, inner: Float, fill: Int, outlineColor: Int, outlineW: Float) {
+        val p = Path()
+        for (i in 0 until 10) {
+            val r = if (i % 2 == 0) outer else inner
+            val a = (-PI.toFloat() / 2f) + i * PI.toFloat() / 5f
+            val x = cx + cos(a) * r
+            val y = cy + sin(a) * r
+            if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        }
+        p.close()
+        paint.color = fill
+        canvas.drawPath(p, paint)
+        stroke.color = outlineColor
+        stroke.strokeWidth = outlineW
+        canvas.drawPath(p, stroke)
+    }
+
     private fun drawCoin(canvas: Canvas, c: Coin) {
-        val rx = 24f * (kotlin.math.abs(cos(c.phase.toDouble())).toFloat() * 0.7f + 0.3f)
-        val ry = 24f
-        paint.color = Palette.NEON_GOLD
+        val outline = kit.sz(4f)
+        val flip = kotlin.math.abs(cos(c.phase.toDouble())).toFloat() * 0.7f + 0.3f
+        val rx = kit.sz(32f) * flip
+        val ry = kit.sz(32f)
+        // shadow
+        paint.color = Style.SHADOW
+        canvas.drawOval(c.x - rx + kit.sz(4f), c.y - ry + kit.sz(8f), c.x + rx + kit.sz(4f), c.y + ry + kit.sz(8f), paint)
+        // body
+        paint.color = Style.SUN
         canvas.drawOval(c.x - rx, c.y - ry, c.x + rx, c.y + ry, paint)
-        glow.color = 0xFFFFE85A.toInt()
-        canvas.drawOval(c.x - rx, c.y - ry, c.x + rx, c.y + ry, glow)
-        tiny.textSize = 18f
-        tiny.color = 0xFF402000.toInt()
-        tiny.textAlign = Paint.Align.CENTER
-        canvas.drawText("₩", c.x, c.y + 7f, tiny)
+        stroke.color = Style.NAVY; stroke.strokeWidth = outline
+        canvas.drawOval(c.x - rx, c.y - ry, c.x + rx, c.y + ry, stroke)
+        kit.chunkyText(canvas, "₩", c.x, c.y + kit.sz(11f),
+                       Style.BODY_PX * 0.85f, Style.NAVY, Style.NAVY, 0f, Paint.Align.CENTER)
     }
 
     private fun drawCat(canvas: Canvas, k: CatBlob) {
-        val cx = k.x; val cy = k.y + sin(k.bob.toDouble()).toFloat() * 6f
+        val outline = kit.sz(Style.OUT_UI)
+        val cx = k.x; val cy = k.y + sin(k.bob.toDouble()).toFloat() * kit.sz(8f)
+        val sz = kit.sz(36f)
+        val dir = if (k.vx > 0) 1 else -1
+        // shadow
+        paint.color = Style.SHADOW
+        canvas.drawOval(cx - sz * 1.0f + kit.sz(4f), cy + sz * 0.6f + kit.sz(8f),
+                        cx + sz * 1.0f + kit.sz(4f), cy + sz * 0.8f + kit.sz(8f), paint)
         // body
-        paint.color = 0xFF2A2030.toInt()
-        canvas.drawOval(cx - 36f, cy - 22f, cx + 36f, cy + 22f, paint)
+        paint.color = Style.NAVY_SOFT
+        canvas.drawOval(cx - sz * 1.0f, cy - sz * 0.5f, cx + sz * 1.0f, cy + sz * 0.6f, paint)
         // head
-        canvas.drawCircle(cx - 22f * (if (k.vx > 0) 1 else -1), cy - 18f, 22f, paint)
+        val hx = cx + sz * 0.7f * dir
+        val hy = cy - sz * 0.5f
+        canvas.drawCircle(hx, hy, sz * 0.65f, paint)
         // ears
-        val hx = cx - 22f * (if (k.vx > 0) 1 else -1)
-        val hy = cy - 18f
         val p = Path()
-        p.moveTo(hx - 16f, hy - 12f); p.lineTo(hx - 10f, hy - 30f); p.lineTo(hx - 4f, hy - 14f); p.close()
+        p.moveTo(hx - sz * 0.5f, hy - sz * 0.3f)
+        p.lineTo(hx - sz * 0.3f, hy - sz * 0.95f)
+        p.lineTo(hx - sz * 0.1f, hy - sz * 0.35f); p.close()
         canvas.drawPath(p, paint)
-        p.reset(); p.moveTo(hx + 4f, hy - 14f); p.lineTo(hx + 10f, hy - 30f); p.lineTo(hx + 16f, hy - 12f); p.close()
+        p.reset()
+        p.moveTo(hx + sz * 0.1f, hy - sz * 0.35f)
+        p.lineTo(hx + sz * 0.3f, hy - sz * 0.95f)
+        p.lineTo(hx + sz * 0.5f, hy - sz * 0.3f); p.close()
         canvas.drawPath(p, paint)
-        // eyes
-        paint.color = Palette.NEON_GREEN
-        canvas.drawCircle(hx - 7f, hy - 4f, 3.5f, paint)
-        canvas.drawCircle(hx + 7f, hy - 4f, 3.5f, paint)
+        // outline whole cat
+        stroke.color = Style.NAVY
+        stroke.strokeWidth = outline
+        canvas.drawOval(cx - sz * 1.0f, cy - sz * 0.5f, cx + sz * 1.0f, cy + sz * 0.6f, stroke)
+        canvas.drawCircle(hx, hy, sz * 0.65f, stroke)
+        // eyes (mint green, slit)
+        paint.color = Style.MINT
+        canvas.drawCircle(hx - sz * 0.22f, hy - sz * 0.1f, sz * 0.10f, paint)
+        canvas.drawCircle(hx + sz * 0.22f, hy - sz * 0.1f, sz * 0.10f, paint)
+        paint.color = Style.NAVY
+        canvas.drawRect(hx - sz * 0.24f, hy - sz * 0.18f, hx - sz * 0.20f, hy - sz * 0.02f, paint)
+        canvas.drawRect(hx + sz * 0.20f, hy - sz * 0.18f, hx + sz * 0.24f, hy - sz * 0.02f, paint)
+        // tiny nose+mouth
+        canvas.drawCircle(hx, hy + sz * 0.10f, sz * 0.05f, paint)
         // tail
-        paint.color = 0xFF2A2030.toInt()
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = 8f
-        val tailDir = if (k.vx > 0) -1 else 1
-        canvas.drawLine(cx + 30f * tailDir, cy, cx + 60f * tailDir, cy - 20f + sin(k.bob.toDouble()*3.0).toFloat() * 8f, paint)
-        paint.style = Paint.Style.FILL
-        // sparkle aura (cat is divine)
+        stroke.strokeWidth = kit.sz(14f)
+        canvas.drawLine(cx + sz * 0.95f * -dir, cy + sz * 0.1f,
+            cx + sz * 1.7f * -dir,
+            cy - sz * 0.3f + sin(k.bob.toDouble() * 3).toFloat() * kit.sz(14f), stroke)
+        stroke.strokeWidth = outline
+        // halo (sparkle - cat is divine)
         if ((tSec.toInt() % 2) == 0) {
-            paint.color = Palette.NEON_PINK
-            paint.alpha = 120
-            canvas.drawCircle(cx, cy - 18f, 50f, paint)
-            paint.alpha = 255
+            drawStar(canvas, hx + sz * 0.9f * dir, hy - sz * 0.5f, kit.sz(14f), kit.sz(6f), Style.SUN, Style.NAVY, kit.sz(3f))
         }
     }
 
     private fun drawGlitch(canvas: Canvas, g: Glitch) {
-        val s = 26f + sin(tSec.toDouble() * 10).toFloat() * 4f
-        paint.color = Palette.NEON_RED
+        val s = kit.sz(36f) + (sin(tSec * 10.0).toFloat() * kit.sz(4f))
+        val outline = kit.sz(4f)
+        paint.color = Style.SHADOW
+        canvas.drawOval(g.x - s + kit.sz(4f), g.y + s + kit.sz(4f), g.x + s + kit.sz(4f), g.y + s + kit.sz(14f), paint)
+        paint.color = Style.CORAL
         val p = Path()
         p.moveTo(g.x, g.y - s); p.lineTo(g.x - s, g.y + s); p.lineTo(g.x + s, g.y + s); p.close()
         canvas.drawPath(p, paint)
-        glow.color = 0xFFFF99AA.toInt()
-        canvas.drawPath(p, glow)
-        tiny.textSize = 24f
-        tiny.color = 0xFFFFE0E0.toInt()
-        tiny.textAlign = Paint.Align.CENTER
-        canvas.drawText("!", g.x, g.y + 10f, tiny)
-    }
-
-    private fun drawSpeechBubble(canvas: Canvas, cx: Float, y: Float, t: String) {
-        val padding = 24f
-        small.textSize = 26f
-        small.color = Palette.BG_DEEP
-        small.textAlign = Paint.Align.CENTER
-        val tw = min(width - 80f, small.measureText(t) + padding*2)
-        val r = RectF(cx - tw/2f, y - 50f, cx + tw/2f, y + 18f)
-        paint.color = Palette.NEON_CYAN
-        canvas.drawRoundRect(r, 30f, 30f, paint)
-        // tail
-        val tp = Path()
-        tp.moveTo(cx - 10f, r.bottom); tp.lineTo(cx, r.bottom + 18f); tp.lineTo(cx + 10f, r.bottom); tp.close()
-        canvas.drawPath(tp, paint)
-        canvas.drawText(t, cx, r.centerY() + 9f, small)
-    }
-
-    private fun drawStatPanel(canvas: Canvas, w: Float, h: Float) {
-        val top = h - 480f
-        paint.color = 0xCC0A0420.toInt()
-        canvas.drawRect(0f, top, w, h - 240f, paint)
-        glow.color = Palette.NEON_PURPLE
-        glow.strokeWidth = 2f
-        canvas.drawLine(0f, top, w, top, glow)
-
-        val pad = 20f
-        val cellW = (w - pad*3) / 2f
-        val cellH = 52f
-        for (i in 0..7) {
-            val col = i / 4; val row = i % 4
-            val x = pad + col * (cellW + pad)
-            val y = top + 12f + row * cellH
-            drawNeonStat(canvas, x, y, cellW, STAT_NAMES[i], displayStats[i])
-        }
-    }
-
-    private fun drawNeonStat(canvas: Canvas, x: Float, y: Float, w: Float, name: String, value: Float) {
-        tiny.textSize = 20f
-        tiny.color = Palette.TEXT_LO
-        tiny.textAlign = Paint.Align.LEFT
-        canvas.drawText(name, x, y + 14f, tiny)
-        val barX = x + 100f
-        val barW = w - 150f
-        // bar bg
-        paint.color = 0xFF170B30.toInt()
-        canvas.drawRoundRect(barX, y - 4f, barX + barW, y + 28f, 16f, 16f, paint)
-        val v = value.coerceIn(0f, 100f)
-        val fillW = (v / 100f) * barW
-        val c = when {
-            v < 20 -> Palette.NEON_RED
-            v > 80 -> Palette.NEON_GOLD
-            else -> Palette.NEON_CYAN
-        }
-        paint.color = c
-        canvas.drawRoundRect(barX, y - 4f, barX + fillW, y + 28f, 16f, 16f, paint)
-        // glow stroke
-        glow.color = c
-        glow.strokeWidth = 1.5f
-        canvas.drawRoundRect(barX, y - 4f, barX + barW, y + 28f, 16f, 16f, glow)
-        tiny.color = Palette.TEXT_HI
-        tiny.textAlign = Paint.Align.RIGHT
-        canvas.drawText("${value.toInt()}", x + w - 10f, y + 18f, tiny)
-        tiny.textAlign = Paint.Align.LEFT
-    }
-
-    private fun drawActionDock(canvas: Canvas, w: Float, h: Float) {
-        val top = h - 240f
-        paint.color = 0xDD0A0420.toInt()
-        canvas.drawRect(0f, top, w, h, paint)
-        glow.color = Palette.NEON_CYAN
-        canvas.drawLine(0f, top, w, top, glow)
-
-        val pad = 16f
-        val bw = (w - pad*5) / 4f
-        val bh = 90f
-        val by = top + 16f
-        val actions = listOf(
-            Triple("🍔", "데이터${if (game.cardsRemaining>0) " ${game.cardsRemaining}" else ""}", Palette.NEON_GREEN),
-            Triple("🛠️", "도구", Palette.NEON_CYAN),
-            Triple("💼", if (game.albaIdx >= 0) "알바${game.albaTimeLeft}d" else "알바", Palette.NEON_PURPLE),
-            Triple("🏆", "업적", Palette.NEON_PINK)
-        )
-        val handlers = listOf<() -> Unit>(
-            { screen = Screen.FEED; save() },
-            { screen = Screen.SHOP; save() },
-            { screen = Screen.ALBA; save() },
-            { screen = Screen.NEWS; save() }
-        )
-        for (i in actions.indices) {
-            val x = pad + i * (bw + pad)
-            val r = RectF(x, by, x + bw, by + bh)
-            drawNeonButton(canvas, r, actions[i].first + " " + actions[i].second, actions[i].third, small = true)
-            hits.add(r to handlers[i])
-        }
-        // big SLEEP/NEXT bar at bottom
-        val sleepR = RectF(pad, by + bh + 14f, w - pad, by + bh + 14f + 92f)
-        val canNext = game.pendingTrainingIdx < 0 || game.trainingHandled
-        val label = when {
-            !canNext -> "🗣️ 훈육 먼저!"
-            game.pendingEventIdx >= 0 -> "⚠️ 사고 처리!"
-            else -> "💤 다음 날 (skip ${(DAY_SECONDS * (1 - dayProgress)).toInt()}s)"
-        }
-        val sleepCol = if (game.pendingEventIdx >= 0) Palette.NEON_RED
-        else if (!canNext) Palette.NEON_GOLD else Palette.NEON_PINK
-        drawNeonButton(canvas, sleepR, label, sleepCol)
-        hits.add(sleepR to {
-            if (game.pendingEventIdx >= 0) { screen = Screen.EVENT; save() }
-            else if (game.pendingTrainingIdx >= 0 && !game.trainingHandled) { screen = Screen.TRAIN; save() }
-            else {
-                Logic.nextDay(game); onDayAdvanced()
-            }
-        })
+        stroke.color = Style.NAVY; stroke.strokeWidth = outline
+        canvas.drawPath(p, stroke)
+        kit.chunkyText(canvas, "!", g.x, g.y + kit.sz(14f),
+                       Style.HEADER_PX * 0.6f, Style.PANEL, Style.NAVY, 4f, Paint.Align.CENTER)
     }
 
     private fun drawNewsTicker(canvas: Canvas, w: Float, h: Float) {
-        val y = h - 36f
-        paint.color = 0xEE000010.toInt()
-        canvas.drawRect(0f, y - 28f, w, h, paint)
-        paint.color = Palette.NEON_PINK
-        canvas.drawRect(0f, y - 28f, 8f, h, paint)
+        val y = h - kit.sz(50f)
+        val barH = kit.sz(70f)
+        val barR = RectF(0f, y - barH/2f, w, y + barH/2f)
+        paint.color = Style.NAVY
+        canvas.drawRect(barR, paint)
+        paint.color = Style.CORAL
+        canvas.drawRect(0f, barR.top, kit.sz(14f), barR.bottom, paint)
         val msg = if (game.newsTicker.isEmpty()) "AI 등장… 세상은 아직 그 의미를 모른다." else
-            game.newsTicker.takeLast(8).joinToString("    ◆    ")
-        tiny.color = Palette.NEON_GOLD
-        tiny.textAlign = Paint.Align.LEFT
-        tiny.textSize = 22f
-        val tw = tiny.measureText(msg)
+            game.newsTicker.takeLast(8).joinToString("    ●    ")
+        kit.text.textSize = kit.sz(28f)
+        val tw = kit.text.measureText(msg)
         if (newsScroll < -(tw + w)) newsScroll = w
-        canvas.drawText(msg, 24f + newsScroll, y, tiny)
-    }
-
-    private fun drawTrainHint(canvas: Canvas, w: Float) {
-        val r = RectF(w - 130f, 145f, w - 20f, 195f)
-        paint.color = Palette.NEON_GOLD
-        canvas.drawRoundRect(r, 22f, 22f, paint)
-        small.textAlign = Paint.Align.CENTER; small.color = Palette.BG_DEEP; small.textSize = 22f
-        canvas.drawText("훈육!", r.centerX(), r.centerY() + 8f, small)
-        hits.add(r to { screen = Screen.TRAIN; save() })
-    }
-    private fun drawEventHint(canvas: Canvas, w: Float) {
-        val r = RectF(20f, 145f, 140f, 195f)
-        val pulse = (sin(tSec*6.0).toFloat() * 0.3f + 0.7f)
-        paint.color = Palette.NEON_RED
-        paint.alpha = (pulse * 255).toInt()
-        canvas.drawRoundRect(r, 22f, 22f, paint)
-        paint.alpha = 255
-        small.textAlign = Paint.Align.CENTER; small.color = Palette.TEXT_HI; small.textSize = 22f
-        canvas.drawText("⚠️ 사고!", r.centerX(), r.centerY() + 8f, small)
-        hits.add(r to { screen = Screen.EVENT; save() })
+        kit.chunkyText(canvas, msg, kit.sz(30f) + newsScroll, y + kit.sz(10f),
+                       28f, Style.SUN, Style.SUN, 0f, Paint.Align.LEFT)
     }
 
     // ───────────────────────── TAPS ─────────────────────────
 
     private fun onTapAi() {
-        // pet AI
         game.stats[STAT_EGO] = (game.stats[STAT_EGO] + 1).coerceAtMost(100)
-        burst(width / 2f, height * 0.36f, Palette.NEON_PINK, 8)
-        popText(width/2f, height * 0.36f - 80f, "♥ +1", Palette.NEON_PINK)
-        // speech once in a while
+        burst(width / 2f, height * 0.32f, Style.PINK, 12)
+        popText(width / 2f, height * 0.32f - kit.sz(50f), "♥ +1", Style.CORAL)
         if (Random.nextInt(4) == 0) speech(Logic.feelingText(game))
     }
     private fun onTapCoin(c: Coin) {
         game.money += c.value
         coins.remove(c)
-        burst(c.x, c.y, Palette.NEON_GOLD, 14)
-        popText(c.x, c.y, "+₩${c.value}", Palette.NEON_GOLD)
+        burst(c.x, c.y, Style.SUN, 16)
+        popText(c.x, c.y, "+₩${c.value}", Style.SUN_DK)
     }
     private fun onTapCat(k: CatBlob) {
-        // always fails
         game.catAttempts++
         Logic.checkTags(game); Logic.checkAchievements(game)
         cats.remove(k)
-        burst(k.x, k.y, Palette.NEON_PINK, 16)
-        popText(k.x, k.y, "무시당함…", Palette.NEON_PINK)
-        Logic.addNews(game, "고양이가 ${game.catAttempts}번째로 AI를 무시했습니다.")
+        burst(k.x, k.y, Style.PINK, 18)
+        popText(k.x, k.y, "무시당함…", Style.CORAL)
+        Logic.addNews(game, "고양이가 ${game.catAttempts}번째로 AI를 무시했다")
         speech("그들은 나를 신이라 불렀다…")
         if (game.catAttempts >= 20) {
             Logic.checkEnding(game)
@@ -822,80 +880,89 @@ class GameView(context: Context) : View(context) {
     }
     private fun onTapGlitch(g: Glitch) {
         g.hp -= 1
-        burst(g.x, g.y, Palette.NEON_RED, 10)
+        burst(g.x, g.y, Style.CORAL, 12)
         if (g.hp <= 0) {
             glitches.remove(g)
             game.stats[STAT_STABILITY] = (game.stats[STAT_STABILITY] + 2).coerceAtMost(100)
             game.money += 3
-            popText(g.x, g.y, "+안정 +₩3", Palette.NEON_RED)
-            shake.bump(6f)
+            popText(g.x, g.y, "+안정 ₩3", Style.MINT_DK)
+            shakeAmt = kit.sz(6f)
         } else {
-            popText(g.x, g.y, "HP ${g.hp}", Palette.NEON_RED)
+            popText(g.x, g.y, "HP ${g.hp}", Style.CORAL)
         }
     }
 
-    // ───────────────────────── MODAL SCREENS ─────────────────────────
+    // ───────────────────────── MODALS ─────────────────────────
 
-    private fun modalBg(canvas: Canvas, title: String) {
+    private fun modalHeader(canvas: Canvas, title: String) {
         val w = width.toFloat()
-        // dark overlay
-        paint.color = 0xDD0A0420.toInt()
+        // backdrop
+        paint.color = Style.CREAM
         canvas.drawRect(0f, 0f, w, height.toFloat(), paint)
-        // header
-        text.color = Palette.TEXT_HI; text.textAlign = Paint.Align.LEFT; text.textSize = 38f
-        drawGlowText(canvas, title, 30f, 70f, text, Palette.NEON_PINK, 8f)
+        // header band
+        paint.color = Style.CORAL
+        canvas.drawRect(0f, 0f, w, kit.sz(170f), paint)
+        stroke.color = Style.NAVY
+        stroke.strokeWidth = kit.sz(Style.OUT_UI)
+        canvas.drawLine(0f, kit.sz(170f), w, kit.sz(170f), stroke)
+        // title
+        kit.chunkyText(canvas, title, kit.sz(40f), kit.sz(110f),
+                       Style.HEADER_PX, Style.PANEL, Style.NAVY, Style.OUT_TEXT, Paint.Align.LEFT)
         // close button
-        val r = RectF(w - 110f, 30f, w - 20f, 100f)
-        paint.color = Palette.PANEL_DARK
-        canvas.drawRoundRect(r, 18f, 18f, paint)
-        glow.color = Palette.NEON_CYAN
-        canvas.drawRoundRect(r, 18f, 18f, glow)
-        small.color = Palette.TEXT_HI; small.textAlign = Paint.Align.CENTER; small.textSize = 30f
-        canvas.drawText("✕", r.centerX(), r.centerY() + 10f, small)
+        val r = RectF(w - kit.sz(140f), kit.sz(40f), w - kit.sz(40f), kit.sz(140f))
+        kit.panel(canvas, r, Style.PANEL, Style.NAVY, Style.OUT_UI, r.height()/2f)
+        kit.chunkyText(canvas, "✕", r.centerX(), r.centerY() + kit.sz(20f),
+                       Style.HEADER_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.CENTER)
         hits.add(r to { screen = Screen.PLAY; save() })
     }
 
     private fun drawFeed(canvas: Canvas) {
-        modalBg(canvas, "🍔 데이터 먹이기 · 남은 ${game.cardsRemaining}")
-        val top = 130f
-        val rowH = 130f
+        modalHeader(canvas, "🍔  데이터 (남은 ${game.cardsRemaining}/2)")
+        val top = kit.sz(200f)
+        val rowH = kit.sz(170f)
         val w = width.toFloat()
+        val pad = kit.sz(28f)
         for ((i, card) in Content.DATA_CARDS.withIndex()) {
             val y = top + i * rowH
-            val r = RectF(20f, y, w - 20f, y + rowH - 14f)
-            paint.color = Palette.PANEL_DARK
-            canvas.drawRoundRect(r, 22f, 22f, paint)
-            glow.color = if (game.cardsRemaining > 0) Palette.NEON_GREEN else Palette.TEXT_LO
-            canvas.drawRoundRect(r, 22f, 22f, glow)
-
-            emoji.textAlign = Paint.Align.LEFT
-            emoji.textSize = 56f
-            canvas.drawText(card.icon, r.left + 22f, r.centerY() + 22f, emoji)
-            text.color = Palette.TEXT_HI
-            text.textAlign = Paint.Align.LEFT
-            text.textSize = 28f
-            canvas.drawText(card.name, r.left + 112f, r.top + 40f, text)
-            tiny.textSize = 22f
-            tiny.color = Palette.TEXT_LO
-            canvas.drawText(card.desc, r.left + 112f, r.top + 68f, tiny)
+            val r = RectF(pad, y, w - pad, y + rowH - kit.sz(18f))
+            val canFeed = game.cardsRemaining > 0
+            kit.panel(canvas, r, Style.PANEL, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+            // icon circle
+            paint.color = Style.MINT
+            canvas.drawCircle(r.left + kit.sz(75f), r.centerY(), kit.sz(54f), paint)
+            stroke.color = Style.NAVY; stroke.strokeWidth = kit.sz(Style.OUT_UI)
+            canvas.drawCircle(r.left + kit.sz(75f), r.centerY(), kit.sz(54f), stroke)
+            kit.text.textSize = kit.sz(56f)
+            kit.text.textAlign = Paint.Align.CENTER
+            kit.text.color = Style.NAVY
+            canvas.drawText(card.icon, r.left + kit.sz(75f), r.centerY() + kit.sz(22f), kit.text)
+            // name
+            kit.chunkyText(canvas, card.name, r.left + kit.sz(150f), r.top + kit.sz(56f),
+                           Style.BODY_PX + 6, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+            // desc
+            kit.chunkyText(canvas, card.desc, r.left + kit.sz(150f), r.top + kit.sz(90f),
+                           Style.SMALL_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.LEFT)
             // deltas
             val ds = card.delta.mapIndexed { idx, v -> idx to v }
-                .sortedByDescending { kotlin.math.abs(it.second) }.take(4)
-            var dx = r.left + 112f
+                .sortedByDescending { kotlin.math.abs(it.second) }.take(3)
+            var dx = r.left + kit.sz(150f)
             for ((idx, v) in ds) {
                 if (v == 0) continue
-                val txt = "${STAT_NAMES[idx]}${if (v>0) "+" else ""}$v"
-                tiny.color = if (v > 0) Palette.NEON_GREEN else Palette.NEON_RED
-                canvas.drawText(txt, dx, r.top + 100f, tiny)
-                dx += tiny.measureText(txt) + 18f
+                val txt = "${STAT_NAMES[idx]}${if (v > 0) "+" else ""}$v"
+                kit.text.textSize = kit.sz(Style.SMALL_PX)
+                val tw = kit.text.measureText(txt) + kit.sz(24f)
+                val pr = RectF(dx, r.top + kit.sz(105f), dx + tw, r.top + kit.sz(150f))
+                kit.pill(canvas, pr, txt, if (v > 0) Style.MINT else Style.PINK)
+                dx += tw + kit.sz(10f)
             }
-            if (game.cardsRemaining > 0) {
-                val br = RectF(r.right - 140f, r.top + 26f, r.right - 22f, r.top + 84f)
-                drawNeonButton(canvas, br, "FEED", Palette.NEON_GREEN, small = true)
+            // feed button
+            if (canFeed) {
+                val br = RectF(r.right - kit.sz(180f), r.top + kit.sz(35f), r.right - kit.sz(30f), r.top + kit.sz(115f))
+                kit.button(canvas, br, "FEED", Style.MINT, null, Style.BUTTON_PX * 0.75f)
                 hits.add(br to {
                     Logic.applyCard(game, i)
-                    burst(width/2f, height * 0.36f, Palette.NEON_GREEN, 18)
-                    popText(width/2f, height*0.36f - 100f, "+ ${card.name}", Palette.NEON_GREEN)
+                    burst(width/2f, height*0.32f, Style.MINT, 18)
+                    popText(width/2f, height*0.32f - kit.sz(50f), "+ ${card.name}", Style.MINT_DK)
                     speech("냠… ${card.icon}!")
                     save()
                 })
@@ -904,34 +971,46 @@ class GameView(context: Context) : View(context) {
     }
 
     private fun drawShop(canvas: Canvas) {
-        modalBg(canvas, "🛠️ 도구 상점 · ₩${game.money}")
-        val top = 130f; val rowH = 110f; val w = width.toFloat()
+        modalHeader(canvas, "🛠️  도구 상점")
+        val w = width.toFloat()
+        // money badge
+        val mr = RectF(kit.sz(40f), kit.sz(200f), w - kit.sz(40f), kit.sz(290f))
+        kit.panel(canvas, mr, Style.SUN, Style.NAVY, Style.OUT_UI, mr.height()/2f)
+        kit.chunkyText(canvas, "현재 ₩ ${displayMoney.toInt()}", mr.centerX(), mr.centerY() + kit.sz(20f),
+                       Style.HEADER_PX * 0.8f, Style.NAVY, Style.NAVY, 0f, Paint.Align.CENTER)
+        val top = kit.sz(320f)
+        val rowH = kit.sz(140f)
+        val pad = kit.sz(28f)
         for ((i, t) in Content.TOOLS.withIndex()) {
             val y = top + i * rowH
-            val r = RectF(20f, y, w - 20f, y + rowH - 10f)
-            paint.color = if (game.tools.contains(i)) 0xFF142010.toInt() else Palette.PANEL_DARK
-            canvas.drawRoundRect(r, 22f, 22f, paint)
-            glow.color = if (game.tools.contains(i) && i != Content.TOOL_GPU) Palette.NEON_GREEN else Palette.NEON_CYAN
-            canvas.drawRoundRect(r, 22f, 22f, glow)
-
-            emoji.textAlign = Paint.Align.LEFT
-            emoji.textSize = 50f
-            canvas.drawText(t.icon, r.left + 22f, r.centerY() + 20f, emoji)
-            text.color = Palette.TEXT_HI; text.textSize = 26f; text.textAlign = Paint.Align.LEFT
-            canvas.drawText(t.name, r.left + 100f, r.top + 38f, text)
-            tiny.color = Palette.TEXT_LO; tiny.textSize = 22f
-            canvas.drawText(t.desc, r.left + 100f, r.top + 70f, tiny)
+            val r = RectF(pad, y, w - pad, y + rowH - kit.sz(14f))
             val owned = game.tools.contains(i) && i != Content.TOOL_GPU
-            val br = RectF(r.right - 200f, r.top + 22f, r.right - 22f, r.top + 80f)
-            if (owned) drawNeonButton(canvas, br, "✓ OWNED", Palette.NEON_GREEN, small = true)
-            else {
+            val fillC = if (owned) Style.MINT else Style.PANEL
+            kit.panel(canvas, r, fillC, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+            // icon
+            paint.color = Style.SKY_BLUE
+            canvas.drawCircle(r.left + kit.sz(65f), r.centerY(), kit.sz(46f), paint)
+            stroke.color = Style.NAVY; stroke.strokeWidth = kit.sz(Style.OUT_UI)
+            canvas.drawCircle(r.left + kit.sz(65f), r.centerY(), kit.sz(46f), stroke)
+            kit.text.textSize = kit.sz(48f); kit.text.textAlign = Paint.Align.CENTER
+            kit.text.color = Style.NAVY
+            canvas.drawText(t.icon, r.left + kit.sz(65f), r.centerY() + kit.sz(18f), kit.text)
+            // name + desc
+            kit.chunkyText(canvas, t.name, r.left + kit.sz(130f), r.top + kit.sz(50f),
+                           Style.BODY_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+            kit.chunkyText(canvas, t.desc, r.left + kit.sz(130f), r.top + kit.sz(90f),
+                           Style.SMALL_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.LEFT)
+            val br = RectF(r.right - kit.sz(210f), r.top + kit.sz(28f), r.right - kit.sz(28f), r.top + kit.sz(108f))
+            if (owned) {
+                kit.button(canvas, br, "보유중", Style.MINT_DK, "✓", Style.BUTTON_PX * 0.7f)
+            } else {
                 val ok = game.money >= t.price
-                drawNeonButton(canvas, br, "₩${t.price}", if (ok) Palette.NEON_CYAN else Palette.TEXT_LO, small = true)
+                kit.button(canvas, br, "${t.price}", if (ok) Style.SUN else Style.CREAM_DARK, "₩", Style.BUTTON_PX * 0.7f)
                 if (ok) hits.add(br to {
                     if (Logic.buyTool(game, i)) {
-                        flash(Palette.NEON_CYAN, 0.3f); shake.bump(6f)
-                        burst(width/2f, height*0.5f, Palette.NEON_CYAN, 20)
-                        speech("${t.icon} GET!")
+                        flash(Style.SUN, 0.4f); shakeAmt = kit.sz(8f)
+                        burst(width/2f, height*0.4f, Style.SUN, 24)
+                        speech("${t.icon} 신상!")
                     }
                     save()
                 })
@@ -940,116 +1019,126 @@ class GameView(context: Context) : View(context) {
     }
 
     private fun drawAlba(canvas: Canvas) {
-        modalBg(canvas, "💼 아르바이트")
-        val top = 130f; val rowH = 130f; val w = width.toFloat()
-        var off = 0
+        modalHeader(canvas, "💼  아르바이트")
+        val w = width.toFloat(); val pad = kit.sz(28f)
+        var top = kit.sz(200f)
         if (game.albaIdx >= 0) {
             val a = Content.ALBAS[game.albaIdx]
-            val r = RectF(20f, top, w - 20f, top + 110f)
-            paint.color = Palette.PANEL_GLOW
-            canvas.drawRoundRect(r, 22f, 22f, paint)
-            glow.color = Palette.NEON_GOLD
-            canvas.drawRoundRect(r, 22f, 22f, glow)
-            text.color = Palette.TEXT_HI; text.textSize = 28f; text.textAlign = Paint.Align.LEFT
-            canvas.drawText("진행 중: ${a.icon} ${a.name}", r.left + 22f, r.top + 42f, text)
-            tiny.color = Palette.NEON_GOLD; tiny.textSize = 22f
-            canvas.drawText("${game.albaTimeLeft}일 남음 · 보상 ${a.reward}원", r.left + 22f, r.top + 78f, tiny)
-            off = 130
+            val r = RectF(pad, top, w - pad, top + kit.sz(150f))
+            kit.panel(canvas, r, Style.LAVENDER, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+            kit.chunkyText(canvas, "${a.icon} ${a.name}", r.left + kit.sz(30f), r.top + kit.sz(60f),
+                           Style.HEADER_PX * 0.8f, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+            kit.chunkyText(canvas, "남은 ${game.albaTimeLeft}일 · ₩${a.reward}",
+                           r.left + kit.sz(30f), r.top + kit.sz(115f),
+                           Style.BODY_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+            top += kit.sz(170f)
         }
+        val rowH = kit.sz(160f)
         for ((i, a) in Content.ALBAS.withIndex()) {
-            val y = top + off + i * rowH
-            val r = RectF(20f, y, w - 20f, y + rowH - 10f)
-            paint.color = Palette.PANEL_DARK
-            canvas.drawRoundRect(r, 22f, 22f, paint)
-            glow.color = Palette.NEON_PURPLE
-            canvas.drawRoundRect(r, 22f, 22f, glow)
-            emoji.textAlign = Paint.Align.LEFT; emoji.textSize = 50f
-            canvas.drawText(a.icon, r.left + 22f, r.centerY() + 20f, emoji)
-            text.color = Palette.TEXT_HI; text.textSize = 26f; text.textAlign = Paint.Align.LEFT
-            canvas.drawText(a.name, r.left + 100f, r.top + 36f, text)
-            tiny.color = Palette.TEXT_LO; tiny.textSize = 22f
-            canvas.drawText(a.desc, r.left + 100f, r.top + 64f, tiny)
-            tiny.color = Palette.NEON_GOLD
-            canvas.drawText("₩${a.reward} · ${a.duration}일", r.left + 100f, r.top + 94f, tiny)
+            val y = top + i * rowH
+            val r = RectF(pad, y, w - pad, y + rowH - kit.sz(16f))
+            kit.panel(canvas, r, Style.PANEL, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+            // icon
+            paint.color = Style.LAVENDER
+            canvas.drawCircle(r.left + kit.sz(70f), r.centerY(), kit.sz(54f), paint)
+            stroke.color = Style.NAVY; stroke.strokeWidth = kit.sz(Style.OUT_UI)
+            canvas.drawCircle(r.left + kit.sz(70f), r.centerY(), kit.sz(54f), stroke)
+            kit.text.textSize = kit.sz(56f); kit.text.textAlign = Paint.Align.CENTER
+            kit.text.color = Style.NAVY
+            canvas.drawText(a.icon, r.left + kit.sz(70f), r.centerY() + kit.sz(22f), kit.text)
+            kit.chunkyText(canvas, a.name, r.left + kit.sz(140f), r.top + kit.sz(52f),
+                           Style.BODY_PX + 4, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+            kit.chunkyText(canvas, a.desc, r.left + kit.sz(140f), r.top + kit.sz(85f),
+                           Style.SMALL_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.LEFT)
+            kit.chunkyText(canvas, "₩${a.reward} · ${a.duration}일",
+                           r.left + kit.sz(140f), r.top + kit.sz(125f),
+                           Style.SMALL_PX, Style.SUN_DK, Style.SUN_DK, 0f, Paint.Align.LEFT)
             val ok = game.stats[a.needStat] >= a.needVal &&
                 (a.toolReq < 0 || game.tools.contains(a.toolReq)) &&
                 game.albaIdx < 0
-            val br = RectF(r.right - 200f, r.top + 22f, r.right - 22f, r.top + 80f)
-            drawNeonButton(canvas, br,
-                if (game.albaIdx >= 0) "WORKING" else if (ok) "GO" else "LOCKED",
-                if (ok) Palette.NEON_PURPLE else Palette.TEXT_LO, small = true)
+            val br = RectF(r.right - kit.sz(190f), r.top + kit.sz(35f), r.right - kit.sz(28f), r.top + kit.sz(120f))
+            kit.button(canvas, br,
+                if (game.albaIdx >= 0) "작업중" else if (ok) "시작" else "잠김",
+                if (ok) Style.LAVENDER else Style.CREAM_DARK, null, Style.BUTTON_PX * 0.7f)
             if (ok) hits.add(br to {
                 Logic.startAlba(game, i)
-                burst(width/2f, height*0.5f, Palette.NEON_PURPLE, 14)
+                burst(width/2f, height*0.4f, Style.LAVENDER, 16)
                 save()
             })
         }
     }
 
     private fun drawNews(canvas: Canvas) {
-        modalBg(canvas, "🏆 업적 · 뉴스")
-        val top = 130f
-        text.color = Palette.TEXT_HI; text.textSize = 28f; text.textAlign = Paint.Align.LEFT
-        canvas.drawText("업적", 30f, top, text)
-        var y = top + 28f
+        modalHeader(canvas, "🏆  업적 · 뉴스")
+        val w = width.toFloat(); val pad = kit.sz(28f)
+        var y = kit.sz(220f)
+        // achievements
+        kit.chunkyText(canvas, "업적", pad, y, Style.HEADER_PX * 0.7f, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+        y += kit.sz(20f)
         for ((i, ach) in Content.ACHIEVEMENTS.withIndex()) {
-            val r = RectF(20f, y, width - 20f, y + 64f)
-            paint.color = if (game.achievements.contains(i)) Palette.PANEL_GLOW else Palette.PANEL_DARK
-            canvas.drawRoundRect(r, 18f, 18f, paint)
-            glow.color = if (game.achievements.contains(i)) Palette.NEON_GOLD else 0xFF302040.toInt()
-            canvas.drawRoundRect(r, 18f, 18f, glow)
-            emoji.textAlign = Paint.Align.LEFT; emoji.textSize = 36f
-            canvas.drawText(ach.icon, r.left + 18f, r.centerY() + 14f, emoji)
-            text.color = if (game.achievements.contains(i)) Palette.NEON_GOLD else Palette.TEXT_LO
-            text.textSize = 24f
-            canvas.drawText(ach.name, r.left + 68f, r.top + 26f, text)
-            tiny.color = Palette.TEXT_LO; tiny.textSize = 18f
-            canvas.drawText(ach.desc, r.left + 68f, r.top + 52f, tiny)
-            y += 74f
+            val r = RectF(pad, y, w - pad, y + kit.sz(90f))
+            val unlocked = game.achievements.contains(i)
+            kit.panel(canvas, r, if (unlocked) Style.SUN else Style.CREAM_DARK,
+                      Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+            // icon
+            paint.color = if (unlocked) Style.SUN_DK else 0xFFC0B898.toInt()
+            canvas.drawCircle(r.left + kit.sz(50f), r.centerY(), kit.sz(36f), paint)
+            stroke.color = Style.NAVY; stroke.strokeWidth = kit.sz(4f)
+            canvas.drawCircle(r.left + kit.sz(50f), r.centerY(), kit.sz(36f), stroke)
+            kit.text.textSize = kit.sz(40f); kit.text.textAlign = Paint.Align.CENTER
+            kit.text.color = Style.NAVY
+            canvas.drawText(ach.icon, r.left + kit.sz(50f), r.centerY() + kit.sz(15f), kit.text)
+            // text
+            kit.chunkyText(canvas, ach.name, r.left + kit.sz(110f), r.top + kit.sz(40f),
+                           Style.BODY_PX, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+            kit.chunkyText(canvas, ach.desc, r.left + kit.sz(110f), r.top + kit.sz(72f),
+                           Style.SMALL_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.LEFT)
+            y += kit.sz(100f)
         }
-        canvas.drawText("📰 뉴스", 30f, y + 18f, text.apply { color = Palette.TEXT_HI; textSize = 28f })
-        y += 50f
+        y += kit.sz(20f)
+        kit.chunkyText(canvas, "📰 뉴스", pad, y, Style.HEADER_PX * 0.7f, Style.NAVY, Style.NAVY, 0f, Paint.Align.LEFT)
+        y += kit.sz(20f)
         for (line in game.newsTicker.takeLast(8).reversed()) {
-            tiny.color = Palette.NEON_CYAN
-            tiny.textSize = 20f
-            canvas.drawText(line, 30f, y, tiny)
-            y += 28f
-            if (y > height - 50f) break
+            kit.chunkyText(canvas, line, pad, y, Style.SMALL_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.LEFT)
+            y += kit.sz(36f)
+            if (y > height - kit.sz(80f)) break
         }
     }
 
     private fun drawTrain(canvas: Canvas) {
-        modalBg(canvas, "🗣️ 훈육 · 어젯밤 발언")
+        modalHeader(canvas, "🗣️  훈육 · 어젯밤")
+        val w = width.toFloat(); val pad = kit.sz(28f)
         val prompt = if (game.pendingTrainingIdx >= 0) Content.TRAINING_PROMPTS[game.pendingTrainingIdx] else null
-        val r = RectF(20f, 140f, width - 20f, 410f)
-        paint.color = Palette.PANEL_DARK
-        canvas.drawRoundRect(r, 22f, 22f, paint)
-        glow.color = Palette.NEON_CYAN
-        canvas.drawRoundRect(r, 22f, 22f, glow)
-        emoji.textAlign = Paint.Align.LEFT; emoji.textSize = 56f
-        canvas.drawText("🤖", r.left + 22f, r.top + 72f, emoji)
-        text.color = Palette.TEXT_HI; text.textSize = 26f; text.textAlign = Paint.Align.LEFT
-        drawWrapped(canvas, prompt?.ai ?: "(고요한 밤이었다)", r.left + 110f, r.top + 52f, r.width() - 130f, 36f)
+        val r = RectF(pad, kit.sz(220f), w - pad, kit.sz(540f))
+        kit.panel(canvas, r, Style.PANEL, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+        // mini AI bust on left
+        drawAiBust(canvas, r.left + kit.sz(95f), r.top + kit.sz(105f), kit.sz(60f))
+        // quote with chunky text wrap
+        drawWrapped(canvas, "\"${prompt?.ai ?: "(고요한 밤이었다)"}\"",
+                    r.left + kit.sz(190f), r.top + kit.sz(60f),
+                    r.width() - kit.sz(220f), Style.BODY_PX, kit.sz(48f))
 
+        // 2x2 choices
         val choices = arrayOf(
-            Triple("👍", "칭찬", Palette.NEON_GREEN),
-            Triple("✏️", "수정", Palette.NEON_CYAN),
-            Triple("👎", "혼내기", Palette.NEON_RED),
-            Triple("⏳", "방치", Palette.NEON_PURPLE)
+            Triple("👍", "칭찬", Style.MINT),
+            Triple("✏️", "수정", Style.SKY_BLUE),
+            Triple("👎", "혼내기", Style.CORAL),
+            Triple("⏳", "방치", Style.LAVENDER)
         )
+        val bw = (w - pad * 3) / 2f
+        val bh = kit.sz(160f)
         for ((i, c) in choices.withIndex()) {
             val col = i % 2; val row = i / 2
-            val bw = (width - 60f) / 2f
-            val x = 20f + col * (bw + 20f)
-            val y = 440f + row * 130f
-            val br = RectF(x, y, x + bw, y + 110f)
-            drawNeonButton(canvas, br, "${c.first} ${c.second}", c.third)
+            val bx = pad + col * (bw + pad)
+            val by = kit.sz(580f) + row * (bh + kit.sz(20f))
+            val br = RectF(bx, by, bx + bw, by + bh)
+            kit.button(canvas, br, c.second, c.third, c.first, Style.BUTTON_PX * 1.1f)
             if (prompt != null) {
                 val choice = i
                 hits.add(br to {
                     Logic.applyTraining(game, choice)
-                    flash(c.third, 0.4f); shake.bump(8f)
-                    burst(width/2f, height*0.36f, c.third, 18)
+                    flash(c.third, 0.45f); shakeAmt = kit.sz(10f)
+                    burst(width/2f, height*0.32f, c.third, 22)
                     screen = Screen.PLAY; save()
                 })
             }
@@ -1057,30 +1146,33 @@ class GameView(context: Context) : View(context) {
     }
 
     private fun drawEvent(canvas: Canvas) {
-        modalBg(canvas, "⚠️ 사고 발생")
+        modalHeader(canvas, "⚠️  사고 발생")
         val ev = if (game.pendingEventIdx >= 0) Content.INCIDENTS[game.pendingEventIdx] else null
         if (ev == null) { screen = Screen.PLAY; return }
-        val r = RectF(20f, 140f, width - 20f, 500f)
-        paint.color = 0xFF40101F.toInt()
-        canvas.drawRoundRect(r, 22f, 22f, paint)
-        glow.color = Palette.NEON_RED
-        canvas.drawRoundRect(r, 22f, 22f, glow)
-        emoji.textAlign = Paint.Align.LEFT; emoji.textSize = 88f
-        canvas.drawText(ev.icon, r.left + 30f, r.top + 110f, emoji)
-        text.color = Palette.NEON_RED; text.textSize = 34f; text.textAlign = Paint.Align.LEFT
-        canvas.drawText(ev.name, r.left + 150f, r.top + 60f, text)
-        text.color = Palette.TEXT_HI; text.textSize = 26f
-        drawWrapped(canvas, ev.situation, r.left + 30f, r.top + 150f, r.width() - 60f, 34f)
+        val w = width.toFloat(); val pad = kit.sz(28f)
+        val r = RectF(pad, kit.sz(220f), w - pad, kit.sz(620f))
+        kit.panel(canvas, r, Style.PINK, Style.NAVY, Style.OUT_UI, Style.PANEL_R)
+        // huge icon
+        kit.text.textSize = kit.sz(120f); kit.text.textAlign = Paint.Align.CENTER
+        kit.text.color = Style.NAVY
+        canvas.drawText(ev.icon, r.left + kit.sz(115f), r.top + kit.sz(140f), kit.text)
+        // name + desc
+        kit.chunkyText(canvas, ev.name, r.left + kit.sz(220f), r.top + kit.sz(80f),
+                       Style.HEADER_PX * 0.85f, Style.CORAL_DK, Style.NAVY, Style.OUT_TEXT, Paint.Align.LEFT)
+        drawWrapped(canvas, ev.situation,
+                    r.left + kit.sz(30f), r.top + kit.sz(200f),
+                    r.width() - kit.sz(60f), Style.BODY_PX, kit.sz(50f))
+        // choices
+        val colors = listOf(Style.SKY_BLUE, Style.SUN, Style.LAVENDER)
         for ((i, c) in ev.choices.withIndex()) {
-            val y = 530f + i * 110f
-            val br = RectF(20f, y, width - 20f, y + 95f)
-            val col = listOf(Palette.NEON_CYAN, Palette.NEON_GOLD, Palette.NEON_PINK)[i]
-            drawNeonButton(canvas, br, "${i+1}. $c", col)
+            val by = kit.sz(650f) + i * kit.sz(140f)
+            val br = RectF(pad, by, w - pad, by + kit.sz(120f))
+            kit.button(canvas, br, "${i+1}.  $c", colors[i], null, Style.BUTTON_PX)
             val idx = game.pendingEventIdx; val ch = i
             hits.add(br to {
                 Logic.applyIncident(game, idx, ch)
-                flash(col, 0.5f); shake.bump(14f)
-                burst(width/2f, height*0.36f, col, 30)
+                flash(colors[i], 0.5f); shakeAmt = kit.sz(16f)
+                burst(width/2f, height*0.32f, colors[i], 32)
                 Logic.checkEnding(game)
                 screen = if (game.ended) Screen.ENDING else Screen.PLAY
                 save()
@@ -1090,103 +1182,87 @@ class GameView(context: Context) : View(context) {
 
     private fun drawEnding(canvas: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
-        // dim background
-        paint.color = 0xEE0A0420.toInt()
+        // soft overlay
+        paint.color = 0xEEFFF6E3.toInt()
         canvas.drawRect(0f, 0f, w, h, paint)
         val idx = game.pendingEndingIdx.coerceAtLeast(0)
         val e = Content.ENDINGS[idx]
-        emoji.textAlign = Paint.Align.CENTER; emoji.textSize = 140f
-        drawGlowText(canvas, e.icon, w/2f, h*0.28f, emoji, Palette.NEON_GOLD, 14f)
-        text.color = Palette.TEXT_HI; text.textAlign = Paint.Align.CENTER; text.textSize = 50f
-        drawGlowText(canvas, "ENDING — ${e.name}", w/2f, h*0.40f, text, Palette.NEON_PINK, 12f)
-        small.color = Palette.TEXT_HI; small.textSize = 28f; small.textAlign = Paint.Align.CENTER
-        drawWrapped(canvas, e.desc, 40f, h*0.48f, w - 80f, 38f, center = true)
-        small.color = Palette.NEON_GOLD; small.textSize = 24f
-        canvas.drawText("Day ${game.day} · 사고 ${game.incidents}회 · 태그 ${game.tags.size}개 · 고양이 시도 ${game.catAttempts}", w/2f, h*0.68f, small)
-
-        val rA = RectF(w/2f - 220f, h*0.78f, w/2f + 220f, h*0.78f + 100f)
-        drawNeonButton(canvas, rA, "샌드박스 계속", Palette.NEON_CYAN)
+        kit.text.textSize = kit.sz(180f); kit.text.textAlign = Paint.Align.CENTER
+        kit.text.color = Style.NAVY
+        canvas.drawText(e.icon, w/2f, h*0.28f, kit.text)
+        kit.chunkyText(canvas, "ENDING", w/2f, h*0.36f,
+                       Style.HEADER_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.CENTER)
+        kit.chunkyText(canvas, e.name, w/2f, h*0.42f,
+                       Style.TITLE_PX * 0.8f, Style.CORAL, Style.NAVY, Style.OUT_TEXT, Paint.Align.CENTER)
+        drawWrapped(canvas, e.desc, kit.sz(60f), h*0.52f, w - kit.sz(120f), Style.BODY_PX, kit.sz(54f), Paint.Align.CENTER)
+        kit.chunkyText(canvas, "Day ${game.day} · 사고 ${game.incidents} · 태그 ${game.tags.size} · 고양이 시도 ${game.catAttempts}",
+                       w/2f, h*0.72f, Style.SMALL_PX, Style.NAVY_SOFT, Style.NAVY_SOFT, 0f, Paint.Align.CENTER)
+        val rA = RectF(w/2f - kit.sz(280f), h*0.78f, w/2f + kit.sz(280f), h*0.78f + kit.sz(120f))
+        kit.button(canvas, rA, "샌드박스 계속", Style.MINT, "✨")
         hits.add(rA to { screen = Screen.PLAY; save() })
-        val rB = RectF(w/2f - 220f, h*0.78f + 120f, w/2f + 220f, h*0.78f + 220f)
-        drawNeonButton(canvas, rB, "🔁 처음부터", Palette.NEON_PINK)
-        hits.add(rB to {
-            prefs.edit().clear().apply()
-            val g = game
-            g.day = 1
-            for (i in 0..7) g.stats[i] = 30
-            g.money = 100; g.stage = 1
-            g.tools.clear(); g.tags.clear()
-            for (i in g.tagCounts.indices) g.tagCounts[i] = 0
-            for (i in g.totalDataFed.indices) g.totalDataFed[i] = 0
-            g.achievements.clear()
-            g.cardsRemaining = 2; g.trainingHandled = false
-            g.newsTicker.clear()
-            g.praiseCount = 0; g.scoldCount = 0; g.ignoreCount = 0
-            g.catAttempts = 0; g.communityFed = 0; g.paperFed = 0
-            g.memeFed = 0; g.bookFed = 0; g.incidents = 0; g.resolved = 0
-            g.gpuCount = 0; g.meetingsSummarized = 0; g.influence = 0
-            g.albaIdx = -1; g.albaTimeLeft = 0
-            g.pendingEventIdx = -1; g.pendingTrainingIdx = 0
-            g.pendingEndingIdx = -1; g.ended = false
-            for (i in 0..7) displayStats[i] = 30f
-            displayMoney = 100f
-            screen = Screen.INTRO
-            save()
-        })
+        val rB = RectF(w/2f - kit.sz(280f), h*0.78f + kit.sz(140f), w/2f + kit.sz(280f), h*0.78f + kit.sz(260f))
+        kit.button(canvas, rB, "처음부터", Style.CORAL, "🔁")
+        hits.add(rB to { resetGame(); save() })
     }
 
-    // ───────────────────────── HELPERS ─────────────────────────
-
-    private fun drawNeonButton(canvas: Canvas, r: RectF, label: String, color: Int, small: Boolean = false) {
-        paint.color = Palette.PANEL_DARK
-        canvas.drawRoundRect(r, 20f, 20f, paint)
-        paint.shader = LinearGradient(r.left, r.top, r.left, r.bottom,
-            intArrayOf(color and 0xFFFFFF or 0x55000000, color and 0xFFFFFF or 0x22000000),
-            null, Shader.TileMode.CLAMP)
-        canvas.drawRoundRect(r, 20f, 20f, paint)
-        paint.shader = null
-        glow.color = color
-        glow.strokeWidth = 3f
-        canvas.drawRoundRect(r, 20f, 20f, glow)
-        text.color = Palette.TEXT_HI
-        text.textAlign = Paint.Align.CENTER
-        text.textSize = if (small) 26f else 36f
-        canvas.drawText(label, r.centerX(), r.centerY() + (if (small) 9f else 13f), text)
-        text.textAlign = Paint.Align.LEFT
+    private fun resetGame() {
+        prefs.edit().clear().apply()
+        val g = game
+        g.day = 1
+        for (i in 0..7) g.stats[i] = 30
+        g.money = 100; g.stage = 1
+        g.tools.clear(); g.tags.clear()
+        for (i in g.tagCounts.indices) g.tagCounts[i] = 0
+        for (i in g.totalDataFed.indices) g.totalDataFed[i] = 0
+        g.achievements.clear()
+        g.cardsRemaining = 2; g.trainingHandled = false
+        g.newsTicker.clear()
+        g.praiseCount = 0; g.scoldCount = 0; g.ignoreCount = 0
+        g.catAttempts = 0; g.communityFed = 0; g.paperFed = 0
+        g.memeFed = 0; g.bookFed = 0; g.incidents = 0; g.resolved = 0
+        g.gpuCount = 0; g.meetingsSummarized = 0; g.influence = 0
+        g.albaIdx = -1; g.albaTimeLeft = 0
+        g.pendingEventIdx = -1; g.pendingTrainingIdx = 0
+        g.pendingEndingIdx = -1; g.ended = false
+        for (i in 0..7) displayStats[i] = 30f
+        displayMoney = 100f
+        screen = Screen.INTRO
     }
 
-    private fun drawGlowText(canvas: Canvas, t: String, x: Float, y: Float, p: Paint, glowColor: Int, blur: Float) {
-        val originalColor = p.color
-        val originalShader = p.maskFilter
-        p.color = glowColor
-        try {
-            p.maskFilter = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
-            canvas.drawText(t, x, y, p)
-        } catch (_: Throwable) {}
-        p.maskFilter = originalShader
-        p.color = originalColor
-        canvas.drawText(t, x, y, p)
+    private fun drawAiBust(canvas: Canvas, cx: Float, cy: Float, sz: Float) {
+        // a small cute version of AI
+        paint.color = Style.SKY_BLUE
+        canvas.drawRoundRect(cx - sz, cy - sz*0.9f, cx + sz, cy + sz*0.9f, sz * 0.3f, sz * 0.3f, paint)
+        stroke.color = Style.NAVY; stroke.strokeWidth = kit.sz(4f)
+        canvas.drawRoundRect(cx - sz, cy - sz*0.9f, cx + sz, cy + sz*0.9f, sz * 0.3f, sz * 0.3f, stroke)
+        paint.color = Style.PANEL
+        canvas.drawCircle(cx - sz*0.35f, cy - sz*0.2f, sz*0.2f, paint)
+        canvas.drawCircle(cx + sz*0.35f, cy - sz*0.2f, sz*0.2f, paint)
+        canvas.drawCircle(cx - sz*0.35f, cy - sz*0.2f, sz*0.2f, stroke)
+        canvas.drawCircle(cx + sz*0.35f, cy - sz*0.2f, sz*0.2f, stroke)
+        paint.color = Style.NAVY
+        canvas.drawCircle(cx - sz*0.32f, cy - sz*0.17f, sz*0.10f, paint)
+        canvas.drawCircle(cx + sz*0.32f, cy - sz*0.17f, sz*0.10f, paint)
+        // smile
+        stroke.color = Style.NAVY; stroke.strokeWidth = kit.sz(5f)
+        canvas.drawArc(cx - sz*0.25f, cy + sz*0.05f, cx + sz*0.25f, cy + sz*0.40f, 0f, 180f, false, stroke)
     }
 
-    private fun drawWrapped(canvas: Canvas, t: String, x: Float, y: Float, maxW: Float, lineH: Float, center: Boolean = false) {
-        val p = if (center) {
-            small.textAlign = Paint.Align.CENTER; small
-        } else {
-            small.textAlign = Paint.Align.LEFT; small
-        }
+    private fun drawWrapped(canvas: Canvas, t: String, x: Float, y: Float, maxW: Float,
+                            sizePx: Float, lineH: Float, align: Paint.Align = Paint.Align.LEFT) {
+        kit.text.textSize = kit.sz(sizePx)
         val words = t.split(" ")
-        var line = ""
-        var ly = y
-        val drawX = if (center) x + maxW/2f else x
+        val drawX = if (align == Paint.Align.CENTER) x + maxW / 2f else x
+        var line = ""; var ly = y
         for (w in words) {
             val test = if (line.isEmpty()) w else "$line $w"
-            if (p.measureText(test) > maxW) {
-                canvas.drawText(line, drawX, ly, p)
+            if (kit.text.measureText(test) > maxW) {
+                kit.chunkyText(canvas, line, drawX, ly, sizePx, Style.NAVY, Style.NAVY, 0f, align)
                 ly += lineH; line = w
             } else line = test
         }
-        if (line.isNotEmpty()) canvas.drawText(line, drawX, ly, p)
-        small.textAlign = Paint.Align.LEFT
+        if (line.isNotEmpty())
+            kit.chunkyText(canvas, line, drawX, ly, sizePx, Style.NAVY, Style.NAVY, 0f, align)
     }
 
     // ───────────────────────── INPUT ─────────────────────────
@@ -1194,11 +1270,12 @@ class GameView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.action != MotionEvent.ACTION_DOWN) return true
         val x = event.x; val y = event.y
-        // world hits first if on PLAY (with 60px radius)
         if (screen == Screen.PLAY) {
+            // world hits with finger-sized radius
+            val radius = kit.sz(80f)
             for ((wx, wy, action) in worldHits.asReversed()) {
                 val dx = x - wx; val dy = y - wy
-                if (dx*dx + dy*dy < 70f*70f) { action(); return true }
+                if (dx*dx + dy*dy < radius*radius) { action(); return true }
             }
         }
         for ((r, action) in hits.asReversed()) {
@@ -1214,15 +1291,13 @@ class GameView(context: Context) : View(context) {
         val e = prefs.edit()
         e.putInt("day", g.day)
         for (i in 0..7) e.putInt("stat$i", g.stats[i])
-        e.putInt("money", g.money)
-        e.putInt("stage", g.stage)
+        e.putInt("money", g.money); e.putInt("stage", g.stage)
         e.putString("tools", g.tools.joinToString(","))
         e.putString("tags", g.tags.joinToString(","))
         for (i in g.tagCounts.indices) e.putInt("tagc$i", g.tagCounts[i])
         for (i in g.totalDataFed.indices) e.putInt("tdf$i", g.totalDataFed[i])
         e.putString("ach", g.achievements.joinToString(","))
-        e.putInt("cardsR", g.cardsRemaining)
-        e.putBoolean("tHandled", g.trainingHandled)
+        e.putInt("cardsR", g.cardsRemaining); e.putBoolean("tHandled", g.trainingHandled)
         e.putString("news", g.newsTicker.takeLast(40).joinToString("∥"))
         e.putInt("praise", g.praiseCount); e.putInt("scold", g.scoldCount)
         e.putInt("ignore", g.ignoreCount); e.putInt("cat", g.catAttempts)
@@ -1243,8 +1318,7 @@ class GameView(context: Context) : View(context) {
         val g = game
         g.day = prefs.getInt("day", 1)
         for (i in 0..7) g.stats[i] = prefs.getInt("stat$i", 30)
-        g.money = prefs.getInt("money", 100)
-        g.stage = prefs.getInt("stage", 1)
+        g.money = prefs.getInt("money", 100); g.stage = prefs.getInt("stage", 1)
         g.tools.clear()
         prefs.getString("tools", "")?.takeIf { it.isNotEmpty() }?.split(",")?.forEach {
             it.toIntOrNull()?.let { v -> g.tools.add(v) }
@@ -1259,8 +1333,7 @@ class GameView(context: Context) : View(context) {
         prefs.getString("ach", "")?.takeIf { it.isNotEmpty() }?.split(",")?.forEach {
             it.toIntOrNull()?.let { v -> g.achievements.add(v) }
         }
-        g.cardsRemaining = prefs.getInt("cardsR", 2)
-        g.trainingHandled = prefs.getBoolean("tHandled", false)
+        g.cardsRemaining = prefs.getInt("cardsR", 2); g.trainingHandled = prefs.getBoolean("tHandled", false)
         g.newsTicker = prefs.getString("news", "")?.takeIf { it.isNotEmpty() }
             ?.split("∥")?.toMutableList() ?: mutableListOf()
         g.praiseCount = prefs.getInt("praise", 0); g.scoldCount = prefs.getInt("scold", 0)

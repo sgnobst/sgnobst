@@ -1,421 +1,399 @@
 package com.sgnobst.aigotchi
 
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.Typeface
 
-// v4.0: 8-bit pixel-RPG palette. 16-color NES-ish.
+// v6.0 — modern commercial mobile-game palette + smooth primitives.
 object Style {
-    // Background / sky / depth
-    const val BG_NIGHT    = 0xFF0B0B2A.toInt()
-    const val BG_DUSK     = 0xFF1B1340.toInt()
-    const val BG_DAWN     = 0xFF3A2A70.toInt()
-    const val BG_DAY_TOP  = 0xFF4A6BD8.toInt()
-    const val BG_DAY_MID  = 0xFF6B92E8.toInt()
-    const val STAR        = 0xFFEDE7B0.toInt()
-    const val MOON        = 0xFFF4E8A0.toInt()
+    // ─ Backdrop ─
+    const val BG_BASE    = 0xFF0A0A1E.toInt()
+    const val BG_PANEL   = 0xCC1A1830.toInt()   // semi-transparent dark surface
+    const val BG_PANEL_2 = 0xF21F1D38.toInt()
+    const val BG_FROST   = 0x33FFFFFF              // bright frosted tint
 
-    // Ground / tiles
-    const val FLOOR_A     = 0xFF3A3050.toInt()
-    const val FLOOR_B     = 0xFF2A2240.toInt()
-    const val FLOOR_LINE  = 0xFF6A5DA0.toInt()
-    const val WALL_DARK   = 0xFF1C1638.toInt()
-    const val WALL_LIGHT  = 0xFF332858.toInt()
+    // ─ Brand accents ─
+    const val PRIMARY     = 0xFFFF5C7C.toInt()    // coral-pink CTA
+    const val PRIMARY_DK  = 0xFFC93A5C.toInt()
+    const val PRIMARY_LT  = 0xFFFF8AA4.toInt()
 
-    // Bright sprite / accent (NES-y)
-    const val PX_WHITE    = 0xFFF6F7FB.toInt()
-    const val PX_LIGHT    = 0xFFC8D0E8.toInt()
-    const val PX_GRAY     = 0xFF606480.toInt()
-    const val PX_DARK     = 0xFF1A1830.toInt()
-    const val PX_BLACK    = 0xFF000000.toInt()
+    const val ACCENT      = 0xFF3AE0D0.toInt()    // teal highlight (money / ASK)
+    const val ACCENT_DK   = 0xFF1AA899.toInt()
+    const val ACCENT_LT   = 0xFF74EEDF.toInt()
 
-    const val NEON_RED    = 0xFFF24A4A.toInt()
-    const val NEON_RED_DK = 0xFF8B1F1F.toInt()
-    const val NEON_PINK   = 0xFFFF6FA8.toInt()
-    const val NEON_ORANGE = 0xFFFFA838.toInt()
-    const val NEON_YELLOW = 0xFFFFE34A.toInt()
-    const val NEON_GREEN  = 0xFF52E064.toInt()
-    const val NEON_GRN_DK = 0xFF1F8A2A.toInt()
-    const val NEON_CYAN   = 0xFF50C8F4.toInt()
-    const val NEON_CYAN_DK= 0xFF1F6FAA.toInt()
-    const val NEON_BLUE   = 0xFF4A6FE0.toInt()
-    const val NEON_PURPLE = 0xFFB670F0.toInt()
-    const val NEON_BROWN  = 0xFFA06A40.toInt()
+    const val SECONDARY   = 0xFFB670F0.toInt()    // purple
+    const val SECONDARY_DK= 0xFF7E3CB8.toInt()
 
-    // UI accents
-    const val UI_PANEL    = 0xFF12102C.toInt()
-    const val UI_PANEL_LT = 0xFF1F1C40.toInt()
-    const val UI_BORDER   = 0xFFF6F7FB.toInt()  // white pixel border
-    const val UI_BORDER_DK= 0xFF5A5A80.toInt()  // bevel
+    const val WARN        = 0xFFFFA838.toInt()
+    const val WARN_DK     = 0xFFB87A20.toInt()
 
-    // Text
-    const val TEXT_HI     = 0xFFF6F7FB.toInt()
-    const val TEXT_LO     = 0xFF9FA0C8.toInt()
-    const val TEXT_GREEN  = 0xFF80FF80.toInt()  // dot-matrix LED feel
+    const val DANGER      = 0xFFFF4F4F.toInt()
+    const val DANGER_DK   = 0xFFB02828.toInt()
 
-    // Logical text sizes (scaled by width/1080)
-    const val TITLE_PX     = 110f
-    const val HEADER_PX    = 64f
-    const val BODY_PX      = 38f
-    const val SMALL_PX     = 30f
-    const val TINY_PX      = 24f
-    const val BUTTON_PX    = 44f
-    const val BIG_NUM_PX   = 72f
-    const val STAT_LABEL_PX= 28f
-    const val STAT_VAL_PX  = 28f
+    const val SUCCESS     = 0xFF44D67A.toInt()
+    const val SUCCESS_DK  = 0xFF1F9E50.toInt()
 
-    // Pixel-grid sizing helpers
-    const val PIXEL_UNIT_BASE = 10f   // base "logical pixel" before scaling
+    // ─ Radial glow colors (very low alpha) ─
+    const val GLOW_PURPLE = 0x66B048FF
+    const val GLOW_TEAL   = 0x553AE0D0
+    const val GLOW_PINK   = 0x44E73C7E
+
+    // ─ Text ─
+    const val TEXT_HI     = 0xFFFFFFFF.toInt()
+    const val TEXT_MD     = 0xFFCFD2E6.toInt()
+    const val TEXT_LO     = 0xFF8E92AE.toInt()
+    const val TEXT_DARK   = 0xFF0A0A1E.toInt()
+
+    // ─ Shadow ─
+    const val SHADOW      = 0x66000000
+
+    // ─ Type scale (logical px, scaled by width/1080) ─
+    const val DISPLAY_PX = 130f
+    const val HERO_PX    = 88f
+    const val H1_PX      = 66f
+    const val H2_PX      = 54f
+    const val H3_PX      = 44f
+    const val BODY_PX    = 38f
+    const val LABEL_PX   = 32f
+    const val CAPTION_PX = 26f
+    const val TINY_PX    = 22f
+    const val CTA_PX     = 48f
+    const val TAB_PX     = 26f
+
+    // ─ Geometry ─
+    const val PANEL_R    = 44f
+    const val CARD_R     = 36f
+    const val CHIP_R_PX  = 999f
 }
 
-// Reusable paint kit, with pixel-art primitives.
 class StyleKit {
-    val fill = Paint()  // INTENTIONALLY no anti-alias → crisp pixels
-    val stroke = Paint().apply {
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeJoin = Paint.Join.MITER
-        strokeCap = Paint.Cap.SQUARE
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
     }
     val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         color = Style.TEXT_HI
     }
-    val textOut = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
-        style = Paint.Style.STROKE
-        strokeJoin = Paint.Join.MITER
-        strokeCap = Paint.Cap.SQUARE
-        color = Style.PX_BLACK
+    val textRegular = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        color = Style.TEXT_MD
     }
-    var s = 1f   // scale factor
-    var pxU = 6f // size of one "logical pixel" cell after scale
+    var s = 1f
 
-    fun setScale(viewWidth: Int) {
-        s = viewWidth / 1080f
-        pxU = (Style.PIXEL_UNIT_BASE * s).coerceAtLeast(2f)
-    }
-
+    fun setScale(viewWidth: Int) { s = viewWidth / 1080f }
     fun sz(v: Float) = v * s
 
-    // ─── Chunky bold text with pixel-style hard outline ───
-    fun pxText(c: Canvas, t: String, x: Float, y: Float, sizePx: Float,
-               color: Int = Style.TEXT_HI, outlineColor: Int = Style.PX_BLACK,
-               outline: Float = 6f, align: Paint.Align = Paint.Align.LEFT) {
+    // ─── Backdrop: deep base + animated radial glows ───
+    fun drawBg(c: Canvas, w: Float, h: Float, t: Float) {
+        fill.color = Style.BG_BASE
+        fill.shader = null
+        c.drawRect(0f, 0f, w, h, fill)
+
+        // Glow A: purple top-left
+        val gAcx = w * 0.22f + (Math.sin(t.toDouble() * 0.25) * w * 0.05f).toFloat()
+        val gAcy = h * 0.18f
+        fill.shader = RadialGradient(gAcx, gAcy, w * 0.65f,
+            intArrayOf(Style.GLOW_PURPLE, 0x00000000),
+            floatArrayOf(0f, 1f), Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h, fill)
+
+        // Glow B: teal top-right
+        val gBcx = w * 0.85f - (Math.cos(t.toDouble() * 0.32) * w * 0.06f).toFloat()
+        val gBcy = h * 0.22f
+        fill.shader = RadialGradient(gBcx, gBcy, w * 0.55f,
+            intArrayOf(Style.GLOW_TEAL, 0x00000000),
+            floatArrayOf(0f, 1f), Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h, fill)
+
+        // Glow C: pink bottom-mid
+        val gCcx = w * 0.4f + (Math.sin(t.toDouble() * 0.2) * w * 0.08f).toFloat()
+        val gCcy = h * 0.78f
+        fill.shader = RadialGradient(gCcx, gCcy, w * 0.7f,
+            intArrayOf(Style.GLOW_PINK, 0x00000000),
+            floatArrayOf(0f, 1f), Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w, h, fill)
+
+        fill.shader = null
+    }
+
+    // ─── Rounded text with soft shadow ───
+    fun heading(c: Canvas, t: String, x: Float, y: Float, sizePx: Float,
+                color: Int = Style.TEXT_HI,
+                align: Paint.Align = Paint.Align.LEFT,
+                shadow: Boolean = true) {
         val tsize = sizePx * s
         text.textSize = tsize
         text.textAlign = align
-        if (outline > 0f && outlineColor != color) {
-            textOut.textSize = tsize
-            textOut.textAlign = align
-            textOut.color = outlineColor
-            textOut.strokeWidth = outline * s
-            c.drawText(t, x, y, textOut)
+        if (shadow) {
+            text.color = Style.SHADOW
+            c.drawText(t, x, y + sz(4f), text)
         }
         text.color = color
         c.drawText(t, x, y, text)
     }
 
-    // ─── Pixel panel: hard 2px border + bevel ───
-    fun pxPanel(c: Canvas, r: RectF, fillColor: Int = Style.UI_PANEL,
-                borderColor: Int = Style.UI_BORDER,
-                bevelDark: Int = Style.UI_BORDER_DK,
-                drawShadow: Boolean = true) {
-        if (drawShadow) {
-            fill.color = 0x80000000.toInt()
-            c.drawRect(r.left + pxU, r.top + pxU * 1.6f, r.right + pxU, r.bottom + pxU * 1.6f, fill)
-        }
-        // fill
-        fill.color = fillColor
-        c.drawRect(r, fill)
-        // outer hard border (2px thick)
-        val o = pxU * 0.6f
-        fill.color = borderColor
-        c.drawRect(r.left, r.top, r.right, r.top + o, fill)            // top
-        c.drawRect(r.left, r.bottom - o, r.right, r.bottom, fill)      // bottom
-        c.drawRect(r.left, r.top, r.left + o, r.bottom, fill)          // left
-        c.drawRect(r.right - o, r.top, r.right, r.bottom, fill)        // right
-        // inner bevel: 1 pixel inside, dark on bottom-right
-        val bi = o
-        fill.color = bevelDark
-        c.drawRect(r.left + bi, r.bottom - 2 * o, r.right - bi, r.bottom - o, fill)
-        c.drawRect(r.right - 2 * o, r.top + bi, r.right - o, r.bottom - bi, fill)
-        // corner notches: dark pixel at all 4 corners (chunky NES feel)
-        fill.color = bevelDark
-        c.drawRect(r.left, r.top, r.left + o, r.top + o, fill)
-        c.drawRect(r.right - o, r.top, r.right, r.top + o, fill)
-        c.drawRect(r.left, r.bottom - o, r.left + o, r.bottom, fill)
-        c.drawRect(r.right - o, r.bottom - o, r.right, r.bottom, fill)
+    fun body(c: Canvas, t: String, x: Float, y: Float, sizePx: Float = Style.BODY_PX,
+             color: Int = Style.TEXT_MD,
+             align: Paint.Align = Paint.Align.LEFT,
+             bold: Boolean = false) {
+        val p = if (bold) text else textRegular
+        p.textSize = sizePx * s
+        p.textAlign = align
+        p.color = color
+        c.drawText(t, x, y, p)
     }
 
-    // ─── Pixel button: pressed state pushes down + dims ───
-    fun pxButton(c: Canvas, r: RectF, label: String,
-                 fillColor: Int = Style.NEON_RED,
-                 icon: String? = null,
-                 sizePx: Float = Style.BUTTON_PX,
-                 pressed: Boolean = false) {
-        val o = pxU * 0.6f
-        val pr = if (pressed) RectF(r.left, r.top + o * 1.5f, r.right, r.bottom + o * 1.5f) else r
+    fun measure(t: String, sizePx: Float, bold: Boolean = true): Float {
+        val p = if (bold) text else textRegular
+        p.textSize = sizePx * s
+        return p.measureText(t)
+    }
+
+    // ─── Soft drop-shadow rounded panel ───
+    fun panel(c: Canvas, r: RectF, fillColor: Int = Style.BG_PANEL,
+              radius: Float = Style.PANEL_R,
+              elevation: Float = 6f,
+              borderColor: Int = 0,
+              borderW: Float = 0f) {
+        val cr = radius * s
+        // shadow
+        if (elevation > 0) {
+            val sh = elevation * s
+            fill.color = Style.SHADOW
+            fill.shader = null
+            c.drawRoundRect(r.left, r.top + sh, r.right, r.bottom + sh, cr, cr, fill)
+        }
+        fill.color = fillColor
+        fill.shader = null
+        c.drawRoundRect(r, cr, cr, fill)
+        if (borderColor != 0 && borderW > 0f) {
+            stroke.color = borderColor
+            stroke.strokeWidth = borderW * s
+            c.drawRoundRect(r, cr, cr, stroke)
+        }
+    }
+
+    // ─── Glass card (translucent) ───
+    fun card(c: Canvas, r: RectF, radius: Float = Style.CARD_R) {
+        val cr = radius * s
+        fill.color = Style.SHADOW
+        fill.shader = null
+        c.drawRoundRect(r.left, r.top + sz(6f), r.right, r.bottom + sz(6f), cr, cr, fill)
+        fill.color = Style.BG_PANEL
+        c.drawRoundRect(r, cr, cr, fill)
+        // subtle top highlight stroke
+        fill.color = 0x14FFFFFF
+        c.drawRoundRect(r.left, r.top, r.right, r.top + cr, cr, cr, fill)
+    }
+
+    // ─── Primary CTA pill button (gradient fill + glow) ───
+    fun ctaButton(c: Canvas, r: RectF, label: String, fillColor: Int = Style.PRIMARY,
+                  icon: String? = null, pressed: Boolean = false,
+                  sizePx: Float = Style.CTA_PX) {
+        val cr = r.height() / 2f
+        val pr = if (pressed) RectF(r.left, r.top + sz(4f), r.right, r.bottom + sz(4f)) else r
+        // outer glow
+        fill.color = fillColor and 0x00FFFFFF or 0x55000000.inv() and fillColor or 0x55000000  // glow alpha
+        fill.shader = RadialGradient(pr.centerX(), pr.centerY(),
+            pr.width() * 0.7f,
+            intArrayOf((fillColor and 0xFFFFFF) or 0x55000000, 0x00000000),
+            floatArrayOf(0f, 1f), Shader.TileMode.CLAMP)
+        c.drawRoundRect(pr.left - sz(20f), pr.top - sz(10f),
+                        pr.right + sz(20f), pr.bottom + sz(20f), cr, cr, fill)
+        fill.shader = null
         // shadow
         if (!pressed) {
-            fill.color = 0x90000000.toInt()
-            c.drawRect(pr.left + pxU, pr.top + pxU * 1.4f, pr.right + pxU, pr.bottom + pxU * 1.4f, fill)
+            fill.color = 0x80000000.toInt()
+            c.drawRoundRect(pr.left, pr.top + sz(10f), pr.right, pr.bottom + sz(10f), cr, cr, fill)
         }
-        // fill
-        fill.color = fillColor
-        c.drawRect(pr, fill)
-        // top highlight strip
-        fill.color = blend(fillColor, Style.PX_WHITE, 0.5f)
-        c.drawRect(pr.left + o, pr.top + o, pr.right - o, pr.top + 2 * o, fill)
-        // bottom shadow strip
-        fill.color = blend(fillColor, Style.PX_BLACK, 0.45f)
-        c.drawRect(pr.left + o, pr.bottom - 2 * o, pr.right - o, pr.bottom - o, fill)
-        // hard border
-        fill.color = Style.PX_BLACK
-        c.drawRect(pr.left, pr.top, pr.right, pr.top + o, fill)
-        c.drawRect(pr.left, pr.bottom - o, pr.right, pr.bottom, fill)
-        c.drawRect(pr.left, pr.top, pr.left + o, pr.bottom, fill)
-        c.drawRect(pr.right - o, pr.top, pr.right, pr.bottom, fill)
-        // text
-        val txtY = pr.centerY() + sz(sizePx) * 0.35f
-        if (icon != null) {
-            text.textSize = sz(sizePx * 1.15f)
-            text.textAlign = Paint.Align.LEFT
-            text.color = Style.PX_BLACK
-            val iconW = text.measureText(icon)
-            text.textSize = sz(sizePx)
-            val labW = text.measureText(label)
-            val totalW = iconW + sz(16f) + labW
-            val startX = pr.centerX() - totalW / 2f
-            text.textSize = sz(sizePx * 1.15f)
-            text.color = Style.PX_BLACK
-            c.drawText(icon, startX, pr.centerY() + sz(sizePx) * 0.38f, text)
-            pxText(c, label, startX + iconW + sz(16f), txtY, sizePx,
-                   Style.PX_WHITE, Style.PX_BLACK, 6f, Paint.Align.LEFT)
-        } else {
-            pxText(c, label, pr.centerX(), txtY, sizePx,
-                   Style.PX_WHITE, Style.PX_BLACK, 6f, Paint.Align.CENTER)
-        }
-    }
+        // fill — vertical gradient (light top → darker bottom)
+        val lighter = blend(fillColor, 0xFFFFFFFF.toInt(), 0.18f)
+        val darker = blend(fillColor, 0xFF000000.toInt(), 0.18f)
+        fill.shader = LinearGradient(0f, pr.top, 0f, pr.bottom,
+            lighter, darker, Shader.TileMode.CLAMP)
+        c.drawRoundRect(pr, cr, cr, fill)
+        fill.shader = null
+        // glossy top half oval
+        fill.color = 0x33FFFFFF
+        c.drawRoundRect(pr.left + sz(12f), pr.top + sz(6f),
+                        pr.right - sz(12f), pr.top + pr.height() * 0.45f, cr, cr, fill)
 
-    // ─── Pixel pill/tag chip ───
-    fun pxChip(c: Canvas, r: RectF, label: String, fillColor: Int = Style.NEON_PURPLE) {
-        val o = pxU * 0.5f
-        fill.color = Style.PX_BLACK
-        c.drawRect(r.left - o, r.top - o, r.right + o, r.bottom + o, fill)
-        fill.color = fillColor
-        c.drawRect(r, fill)
-        fill.color = blend(fillColor, Style.PX_WHITE, 0.4f)
-        c.drawRect(r.left, r.top, r.right, r.top + o, fill)
-        fill.color = blend(fillColor, Style.PX_BLACK, 0.4f)
-        c.drawRect(r.left, r.bottom - o, r.right, r.bottom, fill)
-        pxText(c, label, r.centerX(), r.centerY() + sz(Style.SMALL_PX) * 0.36f,
-               Style.SMALL_PX, Style.PX_BLACK, Style.PX_BLACK, 0f, Paint.Align.CENTER)
-    }
-
-    // ─── Segmented pixel stat bar (10 blocks) ───
-    fun pxStatBar(c: Canvas, x: Float, y: Float, w: Float, h: Float, value: Float,
-                  fillColor: Int, label: String) {
-        val o = pxU * 0.5f
         // label
-        pxText(c, label, x - sz(12f), y + h * 0.72f, Style.STAT_LABEL_PX,
-               Style.TEXT_HI, Style.PX_BLACK, 4f, Paint.Align.RIGHT)
-        // outer black border
-        fill.color = Style.PX_BLACK
-        c.drawRect(x - o, y - o, x + w + o, y + h + o, fill)
-        // bg
-        fill.color = Style.UI_PANEL_LT
-        c.drawRect(x, y, x + w, y + h, fill)
-        // 10 segments
-        val v = (value / 10f).coerceIn(0f, 10f)
-        val segW = w / 10f
-        val gap = pxU * 0.3f
-        for (i in 0 until 10) {
-            if (i >= v.toInt() && i + 1 > v) break
-            val filled = (i + 1) <= v
-            val segX = x + i * segW + gap
-            val segR = x + (i + 1) * segW - gap
-            if (filled) {
-                fill.color = fillColor
-                c.drawRect(segX, y + gap, segR, y + h - gap, fill)
-                fill.color = blend(fillColor, Style.PX_WHITE, 0.45f)
-                c.drawRect(segX, y + gap, segR, y + gap + pxU * 0.4f, fill)
-            }
-        }
-    }
-
-    // ─── Generic pixel sprite drawer: char-grid bitmap ───
-    // grid is array of equal-length strings; palette maps char → color (0 = transparent skip)
-    fun pxSprite(c: Canvas, x: Float, y: Float, grid: Array<String>,
-                 palette: Map<Char, Int>, px: Float) {
-        for ((row, line) in grid.withIndex()) {
-            for ((col, ch) in line.withIndex()) {
-                if (ch == '.' || ch == ' ') continue
-                val color = palette[ch] ?: continue
-                fill.color = color
-                c.drawRect(x + col * px, y + row * px,
-                           x + col * px + px + 0.5f, y + row * px + px + 0.5f, fill)
-            }
-        }
-    }
-
-    // ─── Speech bubble (pixel style) ───
-    fun pxSpeech(c: Canvas, cx: Float, bottomY: Float, t: String, maxW: Float) {
-        text.textSize = sz(Style.BODY_PX)
-        val padding = sz(24f)
-        val tw = (text.measureText(t) + padding * 2).coerceAtMost(maxW)
-        val th = sz(Style.BODY_PX) * 1.7f
-        val r = RectF(cx - tw / 2f, bottomY - th, cx + tw / 2f, bottomY)
-        pxPanel(c, r, Style.PX_WHITE, Style.PX_BLACK, Style.PX_GRAY, true)
-        // tail (pixel-stepped triangle)
-        val o = pxU
-        fill.color = Style.PX_WHITE
-        c.drawRect(cx - o * 1.5f, r.bottom, cx + o * 1.5f, r.bottom + o, fill)
-        c.drawRect(cx - o, r.bottom + o, cx + o, r.bottom + o * 2, fill)
-        c.drawRect(cx - o * 0.5f, r.bottom + o * 2, cx + o * 0.5f, r.bottom + o * 3, fill)
-        // tail border
-        fill.color = Style.PX_BLACK
-        c.drawRect(cx - o * 1.5f - o * 0.5f, r.bottom, cx - o * 1.5f, r.bottom + o * 0.6f, fill)
-        c.drawRect(cx + o * 1.5f, r.bottom, cx + o * 1.5f + o * 0.5f, r.bottom + o * 0.6f, fill)
-        c.drawRect(cx - o, r.bottom + o, cx - o * 0.5f, r.bottom + o * 1.6f, fill)
-        c.drawRect(cx + o * 0.5f, r.bottom + o, cx + o, r.bottom + o * 1.6f, fill)
-        // text
-        pxText(c, t, cx, r.centerY() + sz(Style.BODY_PX) * 0.36f,
-               Style.BODY_PX, Style.PX_BLACK, Style.PX_BLACK, 0f, Paint.Align.CENTER)
-    }
-
-    // ─── Pixelated checkerboard floor ───
-    fun pxFloor(c: Canvas, w: Float, floorY: Float, h: Float,
-                colorA: Int = Style.FLOOR_A, colorB: Int = Style.FLOOR_B,
-                lineColor: Int = Style.FLOOR_LINE) {
-        val tile = pxU * 6  // 6 logical pixel cells per tile
-        val rows = ((h - floorY) / tile).toInt() + 2
-        val cols = (w / tile).toInt() + 2
-        for (row in 0 until rows) {
-            for (col in 0 until cols) {
-                val even = (row + col) % 2 == 0
-                fill.color = if (even) colorA else colorB
-                c.drawRect(col * tile, floorY + row * tile,
-                           col * tile + tile + 0.5f, floorY + row * tile + tile + 0.5f, fill)
-            }
-        }
-        // floor top stroke
-        fill.color = lineColor
-        c.drawRect(0f, floorY, w, floorY + pxU * 0.6f, fill)
-        fill.color = Style.PX_BLACK
-        c.drawRect(0f, floorY - pxU * 0.4f, w, floorY, fill)
-    }
-
-    // ─── Background sky/star/parallax ───
-    fun pxSky(c: Canvas, w: Float, h: Float, dayProgress: Float, stars: List<FloatArray>) {
-        // dayProgress 0→1 over a day. Map to night → dawn → day → dusk
-        val phase = dayProgress * 4f  // 0..4
-        val topCol: Int; val midCol: Int
-        when {
-            phase < 1f -> {
-                topCol = blend(Style.BG_NIGHT, Style.BG_DUSK, phase)
-                midCol = blend(Style.BG_DUSK, Style.BG_DAWN, phase)
-            }
-            phase < 2f -> {
-                val t = phase - 1f
-                topCol = blend(Style.BG_DUSK, Style.BG_DAWN, t)
-                midCol = blend(Style.BG_DAWN, Style.BG_DAY_TOP, t)
-            }
-            phase < 3f -> {
-                val t = phase - 2f
-                topCol = blend(Style.BG_DAWN, Style.BG_DAY_TOP, t)
-                midCol = blend(Style.BG_DAY_TOP, Style.BG_DAY_MID, t)
-            }
-            else -> {
-                val t = phase - 3f
-                topCol = blend(Style.BG_DAY_TOP, Style.BG_NIGHT, t)
-                midCol = blend(Style.BG_DAY_MID, Style.BG_DUSK, t)
-            }
-        }
-        // sky: top half topCol, bottom half midCol (banded for retro feel)
-        val bandH = h / 12f
-        for (i in 0 until 12) {
-            val t = i / 11f
-            fill.color = blend(topCol, midCol, t)
-            c.drawRect(0f, i * bandH, w, (i + 1) * bandH + 0.5f, fill)
-        }
-        // stars (only visible at night/dusk)
-        val starAlpha = when {
-            phase < 1f -> 1f - phase
-            phase < 2f -> 0f
-            phase < 3f -> 0f
-            else -> phase - 3f
-        }
-        if (starAlpha > 0.05f) {
-            fill.color = Style.STAR
-            fill.alpha = (255 * starAlpha).toInt().coerceIn(0, 255)
-            for (s in stars) {
-                val sz = s[2]
-                c.drawRect(s[0], s[1], s[0] + sz, s[1] + sz, fill)
-            }
-            fill.alpha = 255
-        }
-        // moon/sun
-        val isDay = phase in 1.5f..3.5f
-        val sunPhase = ((dayProgress + 0.5f) % 1f)  // arc across sky
-        val sx = w * (sunPhase)
-        val sy = h * 0.18f + (Math.sin(sunPhase * Math.PI).toFloat() - 1f) * h * 0.10f
-        if (isDay) {
-            // pixel sun
-            val r = sz(50f)
-            fill.color = Style.NEON_YELLOW
-            c.drawRect(sx - r, sy - r, sx + r, sy + r, fill)
-            fill.color = Style.NEON_ORANGE
-            c.drawRect(sx - r * 0.5f, sy + r, sx + r * 0.5f, sy + r * 1.2f, fill)
-            c.drawRect(sx - r, sy - r * 0.5f, sx - r * 1.2f, sy + r * 0.5f, fill)
-            c.drawRect(sx + r, sy - r * 0.5f, sx + r * 1.2f, sy + r * 0.5f, fill)
-            c.drawRect(sx - r * 0.5f, sy - r * 1.2f, sx + r * 0.5f, sy - r, fill)
-            fill.color = Style.PX_BLACK
-            c.drawRect(sx - r - pxU * 0.4f, sy - r, sx - r, sy + r, fill)
-            c.drawRect(sx + r, sy - r, sx + r + pxU * 0.4f, sy + r, fill)
-            c.drawRect(sx - r, sy - r - pxU * 0.4f, sx + r, sy - r, fill)
-            c.drawRect(sx - r, sy + r, sx + r, sy + r + pxU * 0.4f, fill)
+        val tx = pr.centerX()
+        val ty = pr.centerY() + sz(sizePx) * 0.35f
+        if (icon != null) {
+            text.textSize = sz(sizePx * 1.15f); text.textAlign = Paint.Align.LEFT
+            val iconW = text.measureText(icon)
+            text.textSize = sz(sizePx); text.textAlign = Paint.Align.LEFT
+            val labW = text.measureText(label)
+            val totalW = iconW + sz(20f) + labW
+            val startX = tx - totalW / 2f
+            text.textSize = sz(sizePx * 1.15f); text.color = Style.TEXT_HI
+            c.drawText(icon, startX, pr.centerY() + sz(sizePx) * 0.38f, text)
+            heading(c, label, startX + iconW + sz(20f), ty, sizePx, Style.TEXT_HI, Paint.Align.LEFT, shadow = false)
         } else {
-            val r = sz(46f)
-            fill.color = Style.MOON
-            c.drawRect(sx - r, sy - r, sx + r, sy + r, fill)
-            // crescent shadow
-            fill.color = blend(Style.MOON, Style.PX_BLACK, 0.6f)
-            c.drawRect(sx + r * 0.2f, sy - r * 0.8f, sx + r * 0.7f, sy + r * 0.6f, fill)
-            fill.color = Style.PX_BLACK
-            c.drawRect(sx - r - pxU * 0.4f, sy - r, sx - r, sy + r, fill)
-            c.drawRect(sx + r, sy - r, sx + r + pxU * 0.4f, sy + r, fill)
-            c.drawRect(sx - r, sy - r - pxU * 0.4f, sx + r, sy - r, fill)
-            c.drawRect(sx - r, sy + r, sx + r, sy + r + pxU * 0.4f, fill)
+            heading(c, label, tx, ty, sizePx, Style.TEXT_HI, Paint.Align.CENTER, shadow = false)
         }
     }
 
-    // mountain silhouette band (parallax)
-    fun pxMountains(c: Canvas, w: Float, baseY: Float, color: Int, peak: Float, seed: Float) {
-        val step = pxU * 4
-        val pts = (w / step).toInt() + 2
-        val p = Path()
-        p.moveTo(0f, baseY)
-        for (i in 0 until pts) {
-            val x = i * step
-            val h = (Math.sin((x * 0.013f + seed).toDouble()) * peak * 0.4f +
-                     Math.cos((x * 0.027f + seed * 1.7f).toDouble()) * peak * 0.3f).toFloat() + peak * 0.5f
-            p.lineTo(x, baseY - h)
+    // ─── Ghost button (transparent w/ border) ───
+    fun ghostButton(c: Canvas, r: RectF, label: String, icon: String? = null,
+                    color: Int = Style.TEXT_HI, sizePx: Float = Style.BODY_PX, pressed: Boolean = false) {
+        val cr = r.height() / 2f
+        val pr = if (pressed) RectF(r.left, r.top + sz(2f), r.right, r.bottom + sz(2f)) else r
+        fill.color = 0x33FFFFFF
+        fill.shader = null
+        c.drawRoundRect(pr, cr, cr, fill)
+        stroke.color = color
+        stroke.strokeWidth = sz(3f)
+        c.drawRoundRect(pr, cr, cr, stroke)
+        val tx = pr.centerX()
+        val ty = pr.centerY() + sz(sizePx) * 0.35f
+        if (icon != null) {
+            text.textSize = sz(sizePx); text.textAlign = Paint.Align.LEFT
+            val labW = text.measureText(label)
+            text.textSize = sz(sizePx * 1.1f); text.textAlign = Paint.Align.LEFT
+            val iconW = text.measureText(icon)
+            val total = iconW + sz(14f) + labW
+            val sx = tx - total / 2f
+            text.color = color
+            c.drawText(icon, sx, pr.centerY() + sz(sizePx) * 0.38f, text)
+            heading(c, label, sx + iconW + sz(14f), ty, sizePx, color, Paint.Align.LEFT, shadow = false)
+        } else {
+            heading(c, label, tx, ty, sizePx, color, Paint.Align.CENTER, shadow = false)
         }
-        p.lineTo(w, baseY)
-        p.lineTo(w, baseY + sz(40f))
-        p.lineTo(0f, baseY + sz(40f))
+    }
+
+    // ─── Small icon button (round) ───
+    fun iconButton(c: Canvas, cx: Float, cy: Float, radius: Float, icon: String,
+                   bg: Int = Style.BG_PANEL, fg: Int = Style.TEXT_HI, pressed: Boolean = false) {
+        val r = radius * s
+        val ox = if (pressed) sz(2f) else 0f
+        fill.color = Style.SHADOW
+        c.drawCircle(cx, cy + sz(4f) + ox, r, fill)
+        fill.color = bg
+        c.drawCircle(cx, cy + ox, r, fill)
+        text.textSize = r * 1.0f; text.textAlign = Paint.Align.CENTER; text.color = fg
+        c.drawText(icon, cx, cy + ox + r * 0.35f, text)
+    }
+
+    // ─── Chip / tag pill ───
+    fun chip(c: Canvas, r: RectF, label: String, fillColor: Int = Style.BG_PANEL_2,
+             textColor: Int = Style.TEXT_HI, sizePx: Float = Style.CAPTION_PX,
+             bordered: Boolean = false) {
+        val cr = r.height() / 2f
+        fill.color = fillColor
+        fill.shader = null
+        c.drawRoundRect(r, cr, cr, fill)
+        if (bordered) {
+            stroke.color = textColor
+            stroke.strokeWidth = sz(2f)
+            c.drawRoundRect(r, cr, cr, stroke)
+        }
+        heading(c, label, r.centerX(), r.centerY() + sz(sizePx) * 0.35f,
+                sizePx, textColor, Paint.Align.CENTER, shadow = false)
+    }
+
+    // ─── Smooth filled progress bar ───
+    fun progressBar(c: Canvas, x: Float, y: Float, w: Float, h: Float,
+                    value: Float, color: Int) {
+        val cr = h / 2f
+        // track
+        fill.color = 0x33FFFFFF
+        fill.shader = null
+        c.drawRoundRect(x, y, x + w, y + h, cr, cr, fill)
+        val v = (value / 100f).coerceIn(0f, 1f)
+        if (v > 0f) {
+            val fw = w * v
+            // gradient fill
+            val lighter = blend(color, 0xFFFFFFFF.toInt(), 0.3f)
+            fill.shader = LinearGradient(x, y, x, y + h, lighter, color, Shader.TileMode.CLAMP)
+            c.drawRoundRect(x, y, x + fw.coerceAtLeast(h), y + h, cr, cr, fill)
+            fill.shader = null
+        }
+    }
+
+    // ─── Circular progress ring (for day, etc) ───
+    fun progressRing(c: Canvas, cx: Float, cy: Float, radius: Float, value: Float,
+                     color: Int, trackColor: Int = 0x33FFFFFF, thickness: Float = 12f) {
+        val r = radius * s
+        val tk = thickness * s
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.color = trackColor
+        stroke.strokeWidth = tk
+        c.drawCircle(cx, cy, r, stroke)
+        if (value > 0f) {
+            stroke.color = color
+            val sweep = 360f * value.coerceIn(0f, 1f)
+            c.drawArc(cx - r, cy - r, cx + r, cy + r, -90f, sweep, false, stroke)
+        }
+    }
+
+    // ─── Smooth speech bubble ───
+    fun speech(c: Canvas, cx: Float, bottomY: Float, t: String, maxW: Float) {
+        text.textSize = sz(Style.BODY_PX)
+        val padX = sz(36f); val padY = sz(20f)
+        val tw = (text.measureText(t) + padX * 2).coerceAtMost(maxW)
+        val th = sz(Style.BODY_PX) * 1.7f + padY
+        val r = RectF(cx - tw / 2f, bottomY - th, cx + tw / 2f, bottomY)
+        fill.color = Style.SHADOW
+        fill.shader = null
+        c.drawRoundRect(r.left, r.top + sz(6f), r.right, r.bottom + sz(6f), sz(28f), sz(28f), fill)
+        fill.color = Style.TEXT_HI
+        c.drawRoundRect(r, sz(28f), sz(28f), fill)
+        // tail
+        val p = Path()
+        p.moveTo(cx - sz(16f), r.bottom - sz(2f))
+        p.lineTo(cx, r.bottom + sz(24f))
+        p.lineTo(cx + sz(16f), r.bottom - sz(2f))
+        p.close()
+        c.drawPath(p, fill)
+        heading(c, t, cx, r.centerY() + sz(Style.BODY_PX) * 0.35f,
+                Style.BODY_PX, Style.TEXT_DARK, Paint.Align.CENTER, shadow = false)
+    }
+
+    // ─── Soft radial glow at a point (mascot halo) ───
+    fun glowOrb(c: Canvas, cx: Float, cy: Float, radius: Float, color: Int) {
+        val r = radius * s
+        fill.shader = RadialGradient(cx, cy, r,
+            intArrayOf((color and 0xFFFFFF) or 0x66000000, 0x00000000),
+            floatArrayOf(0f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, r, fill)
+        fill.shader = null
+    }
+
+    // ─── Confetti sparkle (4-point star) ───
+    fun sparkle(c: Canvas, cx: Float, cy: Float, sizePx: Float, color: Int) {
+        val r = sizePx * s
+        val p = Path()
+        p.moveTo(cx, cy - r)
+        p.lineTo(cx + r * 0.25f, cy - r * 0.25f)
+        p.lineTo(cx + r, cy)
+        p.lineTo(cx + r * 0.25f, cy + r * 0.25f)
+        p.lineTo(cx, cy + r)
+        p.lineTo(cx - r * 0.25f, cy + r * 0.25f)
+        p.lineTo(cx - r, cy)
+        p.lineTo(cx - r * 0.25f, cy - r * 0.25f)
         p.close()
         fill.color = color
+        fill.shader = null
         c.drawPath(p, fill)
     }
 
     companion object {
         fun blend(a: Int, b: Int, t: Float): Int {
             val ti = t.coerceIn(0f, 1f)
-            val ai = ((a ushr 24) and 0xFF); val ar = ((a ushr 16) and 0xFF); val ag = ((a ushr 8) and 0xFF); val ab = a and 0xFF
-            val bi = ((b ushr 24) and 0xFF); val br = ((b ushr 16) and 0xFF); val bg = ((b ushr 8) and 0xFF); val bb = b and 0xFF
-            val nA = (ai + (bi - ai) * ti).toInt()
+            val aa = ((a ushr 24) and 0xFF); val ar = ((a ushr 16) and 0xFF); val ag = ((a ushr 8) and 0xFF); val ab = a and 0xFF
+            val ba = ((b ushr 24) and 0xFF); val br = ((b ushr 16) and 0xFF); val bg = ((b ushr 8) and 0xFF); val bb = b and 0xFF
+            val nA = (aa + (ba - aa) * ti).toInt()
             val nR = (ar + (br - ar) * ti).toInt()
             val nG = (ag + (bg - ag) * ti).toInt()
             val nB = (ab + (bb - ab) * ti).toInt()
@@ -424,5 +402,4 @@ class StyleKit {
     }
 }
 
-// Expose blend at top level too for convenience
 fun blend(a: Int, b: Int, t: Float): Int = StyleKit.blend(a, b, t)

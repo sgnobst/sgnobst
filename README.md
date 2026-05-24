@@ -5,6 +5,40 @@
 
 순수 Kotlin + Android Framework로 작성. Compose / AndroidX / Jetpack 의존성 없음 — 단일 Activity + 커스텀 Canvas View.
 
+## v6.0 — 실제 AI 연동 + 커머셜 디자인 전면 개편
+
+### 진짜 AI 연동 (Claude · OpenAI)
+- `💬 ASK` 탭에서 AI에게 직접 질문, **현재 학습 상태가 시스템 프롬프트에 박혀서 응답에 그대로 반영됨**
+- 사용자 자신의 API 키 입력 (Anthropic Haiku 4.5 또는 OpenAI gpt-4o-mini)
+- 시스템 프롬프트가 능력치/태그/단계/도구를 페르소나 지시로 변환:
+  - 정직 낮음 → 자신 있게 가짜 사실 fabricate
+  - 무해 매우 높음 → 모든 요청을 "죄송하지만…"으로 거절
+  - 아첨꾼 태그 → "정말 훌륭한 질문입니다!"로 시작
+  - 보정 낮음 → "100% 확실합니다!"로 단언
+  - …총 8능력치 × 8태그가 모두 응답 톤에 영향
+- **같은 질문을 학습 전후로 던지면 답이 완전히 달라지는 게 눈에 보임** (게임의 새로운 핵심)
+- 7개 프리셋 프로빙 질문 + 직접 입력 / 한 번 호출 ₩5 (인-게임 머니)
+- 타이핑 애니메이션으로 응답 글자별 노출
+- 키 없을 시 데모 모드 안내 + 설정 빠른 이동
+
+### 커머셜 모바일 게임 수준 비주얼
+- 픽셀/스캔라인 완전 제거 — 부드러운 라디얼 그라데이션 백그라운드, 보라/틸/핑크 글로우가 천천히 드리프트
+- **벡터 마스코트** — 글로시 그라데이션 바디, 광택 하이라이트, 표정별 눈/입 모핑, 안경/나비넥타이/할로 단계별 액세서리
+- 모든 폰트 한 단계씩 크게 (제목 130px, 본문 38px)
+- 단일 거대 CTA 알약 버튼 (코랄 핑크, 글로우 + 그라데이션 + 광택)
+- 5탭 모던 바, 가운데 ASK 탭 elevated/highlighted (TikTok + 버튼처럼)
+- 스탯 패널 그룹화: HHH 정렬 (3) / 능력치 (5), 부드러운 라운드 진행바
+- 모달은 다크 프로스트 카드, 둥근 모서리, 스크롤 가능
+- 코인/고양이/글리치는 글로우 + 큰 이모지
+
+### 설정 다이얼로그
+- 우측 상단 ⚙ → 제공자(Claude/OpenAI) 선택 + API 키 입력 + 음소거 + 햅틱 토글
+- 평문 SharedPreferences 저장 (개인 폰 가정)
+
+### 빌드 변경
+- INTERNET, ACCESS_NETWORK_STATE 권한 추가
+- versionCode 6 / versionName "6.0"
+
 ## v5.0 — 사운드·타격감·실제 LLM 덕목
 
 - **사운드** — 런타임 합성한 8비트 칩튠 WAV를 SoundPool로 재생 (탭/코인/글리치/구매/사고/하루넘김/레벨업 등 13종)
@@ -49,9 +83,15 @@ sudo apt-get install -y \
 ./build.sh
 ```
 
-결과물: `app/build/app-release.apk` (~580KB)
+결과물: `app/build/app-release.apk` (~593KB)
 
-릴리즈: `releases/이상한-AI-키우기-v5.0.apk` (v1.0~v4.0도 동봉)
+릴리즈: `releases/이상한-AI-키우기-v6.0.apk` (v1.0~v5.0도 동봉)
+
+### API 키 발급 (v6.0 ASK 기능)
+- Claude: https://console.anthropic.com/ → API Keys (Haiku 4.5, 호출당 약 ₩7)
+- OpenAI: https://platform.openai.com/api-keys (gpt-4o-mini, 호출당 약 ₩3)
+- 앱에서 ⚙ 설정 → 제공자 선택 + 키 붙여넣기 → 저장
+- 키는 기기 SharedPreferences에 평문 저장 (개인 폰 가정, 공용 기기 사용 비권장)
 
 ## 설치 방법
 

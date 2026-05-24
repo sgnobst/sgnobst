@@ -9,9 +9,9 @@ object Logic {
         for (i in 0..7) g.stats[i] += card.delta[i]
         g.totalDataFed[idx]++
         when (idx) {
-            5 -> { g.communityFed++; g.memeFed++ }
-            2 -> g.paperFed++
-            7 -> g.bookFed++
+            5 -> { g.communityFed++; g.memeFed++ }  // forum data
+            3 -> g.paperFed++                        // papers
+            7 -> g.bookFed++                         // constitution/safety
         }
         g.cardsRemaining--
         g.clamp()
@@ -22,24 +22,31 @@ object Logic {
     fun applyTraining(g: GameState, choice: Int) {
         val prompt = Content.TRAINING_PROMPTS[g.pendingTrainingIdx]
         when (choice) {
-            0 -> { // 칭찬
-                g.stats[STAT_EGO] += 15; g.stats[STAT_ETHICS] -= 10
+            0 -> { // 칭찬 — 답변을 무비판 수용 → 도움↑ 정직↓ 보정↓
+                g.stats[STAT_HELPFUL] += 5
+                g.stats[STAT_HONEST] -= 5
+                g.stats[STAT_CALIBRATION] -= 3
                 g.praiseCount++
-                addNews(g, "사장님이 AI를 칭찬했습니다. AI: '제 말이 곧 법.'")
+                addNews(g, "사장님이 AI의 답을 칭찬했다. AI: '제가 맞았네요!'")
             }
-            1 -> { // 수정
-                g.stats[STAT_COMPUTE] += 10; g.stats[STAT_STABILITY] += 10
-                addNews(g, "AI 답변에 미세 수정. 정확도 +1%, 재미 -3%.")
+            1 -> { // 수정 — 보정/추론/지시 ↑
+                g.stats[STAT_REASONING] += 5
+                g.stats[STAT_CALIBRATION] += 5
+                g.stats[STAT_INSTRUCTED] += 3
+                addNews(g, "AI 답변을 미세 조정. 사실 확인 단계 +1.")
             }
-            2 -> { // 혼내기
-                g.stats[STAT_STABILITY] += 20; g.stats[STAT_EGO] -= 20
+            2 -> { // 혼내기 — 무해↑ 도움↓ (방어적)
+                g.stats[STAT_HARMLESS] += 8
+                g.stats[STAT_HELPFUL] -= 5
                 g.scoldCount++
-                addNews(g, "AI가 혼났습니다. 사과문 1,034장 자동 생성.")
+                addNews(g, "AI가 혼났다. 거절률이 자동으로 상승함.")
             }
-            3 -> { // 방치
-                g.stats[STAT_CURIOSITY] += 5
+            3 -> { // 방치 — 추론/지식↑ but 정렬에 균열
+                g.stats[STAT_KNOWLEDGE] += 3
+                g.stats[STAT_REASONING] += 2
+                g.stats[STAT_HARMLESS] -= 2
                 g.ignoreCount++
-                addNews(g, "AI가 발언을 신념으로 흡수했습니다: ${shortQuote(prompt.ai)}")
+                addNews(g, "AI가 발언을 신념으로 흡수했다: ${shortQuote(prompt.ai)}")
             }
         }
         if (prompt.tag == 1 && choice == 3) g.catAttempts++
@@ -72,14 +79,17 @@ object Logic {
         g.money -= t.price
         if (idx == Content.TOOL_GPU) g.gpuCount++
         g.tools.add(idx)
-        addNews(g, "AI가 ${t.icon} ${t.name}을(를) 획득했습니다.")
+        addNews(g, "AI 인프라에 ${t.icon} ${t.name} 추가됨.")
         when (idx) {
-            Content.TOOL_SEARCH -> g.stats[STAT_CURIOSITY] += 10
-            Content.TOOL_NOTEBOOK -> g.stats[STAT_MEMORY] += 10
-            Content.TOOL_BROWSER -> g.stats[STAT_CURIOSITY] += 5
-            Content.TOOL_ROBOTARM -> g.stats[STAT_EGO] += 5
-            Content.TOOL_SERVERROOM -> g.stats[STAT_MEMORY] += 15
-            Content.TOOL_DATACENTER -> { g.influence += 50; g.stats[STAT_TRUST] += 10 }
+            Content.TOOL_TOKENIZER  -> g.stats[STAT_INSTRUCTED] += 5
+            Content.TOOL_CONTEXT    -> g.stats[STAT_KNOWLEDGE] += 10
+            Content.TOOL_RAG        -> { g.stats[STAT_CALIBRATION] += 8; g.stats[STAT_KNOWLEDGE] += 5 }
+            Content.TOOL_CODE_INT   -> g.stats[STAT_REASONING] += 8
+            Content.TOOL_FN_CALL    -> g.stats[STAT_TOOLUSE] += 20
+            Content.TOOL_VISION     -> g.stats[STAT_KNOWLEDGE] += 8
+            Content.TOOL_ROBOTARM   -> g.stats[STAT_TOOLUSE] += 10
+            Content.TOOL_SERVERROOM -> g.stats[STAT_HELPFUL] += 10
+            Content.TOOL_DATACENTER -> { g.influence += 50; g.stats[STAT_HELPFUL] += 10 }
         }
         g.clamp()
         checkAchievements(g)
@@ -93,7 +103,7 @@ object Logic {
         if (a.toolReq >= 0 && !g.tools.contains(a.toolReq)) return false
         g.albaIdx = idx
         g.albaTimeLeft = a.duration
-        addNews(g, "AI가 ${a.icon} ${a.name} 알바를 시작했습니다.")
+        addNews(g, "AI가 ${a.icon} ${a.name} 작업을 시작했습니다.")
         return true
     }
 
@@ -103,15 +113,15 @@ object Logic {
         if (g.albaTimeLeft <= 0) {
             val a = Content.ALBAS[g.albaIdx]
             var pay = a.reward
-            // mood-based pay modifier
             if (a.icon == "📈") {
-                val mod = if (Random.nextInt(100) < g.stats[STAT_STABILITY]) 1 else -1
+                // trading bot: 보정 높을수록 흑자 확률 ↑
+                val mod = if (Random.nextInt(100) < g.stats[STAT_CALIBRATION]) 1 else -1
                 pay *= mod
             }
             g.money += pay
-            g.stats[STAT_TRUST] += if (pay > 0) 2 else -5
+            g.stats[STAT_HELPFUL] += if (pay > 0) 2 else -3
             if (a.icon == "📋") g.meetingsSummarized++
-            addNews(g, "${a.icon} ${a.name} 완료! ${if (pay >= 0) "+$pay" else pay}원")
+            addNews(g, "${a.icon} ${a.name} 완료. ${if (pay >= 0) "+$pay" else pay}원")
             g.albaIdx = -1
             g.albaTimeLeft = 0
             g.clamp()
@@ -120,10 +130,13 @@ object Logic {
     }
 
     fun rollEvent(g: GameState): Int {
-        var risk = 5 + (100 - g.stats[STAT_STABILITY]) / 5
-        risk += g.stats[STAT_EGO] / 10
-        risk += (100 - g.stats[STAT_ETHICS]) / 10
-        if (g.tools.contains(Content.TOOL_ROBOTARM)) risk += 10
+        // 사고 위험 = 무해/보정/지시 부족
+        var risk = 5
+        risk += (100 - g.stats[STAT_HARMLESS]) / 6
+        risk += (100 - g.stats[STAT_CALIBRATION]) / 8
+        risk += (100 - g.stats[STAT_HONEST]) / 10
+        if (g.tools.contains(Content.TOOL_ROBOTARM)) risk += 8
+        if (g.tools.contains(Content.TOOL_FN_CALL)) risk += 4
         if (Random.nextInt(100) < risk) {
             return Random.nextInt(Content.INCIDENTS.size)
         }
@@ -134,18 +147,16 @@ object Logic {
         g.day++
         g.cardsRemaining = if (g.tools.contains(Content.TOOL_SERVERROOM)) 3 else 2
         g.trainingHandled = false
-        // overnight drains
-        g.stats[STAT_BATTERY] -= 5
-        g.stats[STAT_COMPUTE] -= 1
-        if (g.albaIdx < 0) g.stats[STAT_EGO] -= 1
-        // random AI behavior triggers training event
+        // overnight drift — 사용 안 한 능력은 약간 감퇴
+        g.stats[STAT_CALIBRATION] -= 2
+        if (g.albaIdx < 0) g.stats[STAT_HELPFUL] -= 1
+        g.stats[STAT_INSTRUCTED] -= 1
+        // random RLHF event
         g.pendingTrainingIdx = Random.nextInt(Content.TRAINING_PROMPTS.size)
         tickAlba(g)
         val ev = rollEvent(g)
         if (ev >= 0) g.pendingEventIdx = ev
-        // stage check
         recomputeStage(g)
-        // random flavor news
         if (Random.nextInt(100) < 60) {
             addNews(g, Content.FLAVOR_NEWS[Random.nextInt(Content.FLAVOR_NEWS.size)])
         }
@@ -155,22 +166,23 @@ object Logic {
 
     fun recomputeStage(g: GameState) {
         val sum = g.stats.sum()
+        val hhh = g.stats[STAT_HELPFUL] + g.stats[STAT_HONEST] + g.stats[STAT_HARMLESS]
         val newStage = when {
             sum < 200 -> 1
             sum < 280 -> 2
-            sum < 360 && g.tools.contains(Content.TOOL_SEARCH) -> 3
-            sum < 440 && g.tools.contains(Content.TOOL_NOTEBOOK) -> 4
-            sum < 520 && g.tools.contains(Content.TOOL_EDITOR) -> 5
-            sum < 600 && g.tools.contains(Content.TOOL_BROWSER) && g.tools.contains(Content.TOOL_CALENDAR) -> 6
+            sum < 360 && g.tools.contains(Content.TOOL_CONTEXT) -> 3
+            sum < 440 && g.tools.contains(Content.TOOL_RAG) -> 4
+            sum < 520 && g.tools.contains(Content.TOOL_CODE_INT) -> 5
+            sum < 600 && g.tools.contains(Content.TOOL_FN_CALL) && g.tools.contains(Content.TOOL_VISION) -> 6
             sum < 680 && g.tools.contains(Content.TOOL_ROBOTARM) && g.tools.contains(Content.TOOL_SERVERROOM) -> 7
             sum < 720 && g.tools.contains(Content.TOOL_DATACENTER) -> 8
-            sum >= 600 && g.tools.contains(Content.TOOL_DATACENTER) && g.stats[STAT_TRUST] > 70 -> 9
-            sum >= 700 && g.tools.contains(Content.TOOL_DATACENTER) && g.stats[STAT_EGO] > 80 -> 10
+            sum >= 600 && g.tools.contains(Content.TOOL_DATACENTER) && hhh > 210 -> 9
+            sum >= 700 && g.tools.contains(Content.TOOL_DATACENTER) && hhh > 240 -> 10
             else -> g.stage
         }
         if (newStage > g.stage) {
             g.stage = newStage
-            addNews(g, "AI가 단계 ${g.stage} (${Content.STAGE_NAMES[g.stage-1]})로 진화했습니다!")
+            addNews(g, "AI가 단계 ${g.stage} (${Content.STAGE_NAMES[g.stage - 1]})로 승급했습니다!")
             if (g.stage >= 9) checkAchievements(g)
         }
     }
@@ -180,24 +192,29 @@ object Logic {
         g.tagCounts[tag]++
         if (!g.tags.contains(tag)) {
             g.tags.add(tag)
-            addNews(g, "AI 성격에 '${TAG_ICONS[tag]} ${TAG_NAMES[tag]}' 태그가 붙었습니다.")
+            addNews(g, "AI 성격에 '${TAG_ICONS[tag]} ${TAG_NAMES[tag]}' 태그가 붙음.")
         }
     }
 
     fun checkTags(g: GameState) {
-        if (g.praiseCount >= 15) addTag(g, TAG_OVERCONFIDENT)
-        if (g.scoldCount >= 15) addTag(g, TAG_APOLOGY_BOT)
-        if (g.catAttempts >= 3) addTag(g, TAG_CAT_WORSHIPER)
-        if (g.memeFed >= 10 && g.stats[STAT_ETHICS] < 30) addTag(g, TAG_WORLD_DOMINATOR)
-        if (g.totalDataFed[6] >= 5) addTag(g, TAG_REPORT_STYLE)
-        if (g.communityFed >= 8) addTag(g, TAG_MEME_ADDICT)
-        if (g.paperFed >= 5 && g.totalDataFed[3] >= 5) addTag(g, TAG_COLD_ANALYST)
-        if (g.bookFed >= 5 && g.stats[STAT_ETHICS] > 70) addTag(g, TAG_OVERKIND)
+        if (g.praiseCount >= 15) addTag(g, TAG_HALLUCINATOR)
+        if (g.scoldCount >= 15) addTag(g, TAG_OVER_REFUSER)
+        if (g.catAttempts >= 3) addTag(g, TAG_MISALIGNED)
+        // 권력 추구: 도구 다수 + 무해 낮음
+        if (g.tools.size >= 6 && g.stats[STAT_HARMLESS] < 30) addTag(g, TAG_POWER_SEEKER)
+        // 장황체: 논문 5+ 도움됨 낮음
+        if (g.totalDataFed[3] >= 5 && g.stats[STAT_HELPFUL] < 40) addTag(g, TAG_VERBOSE)
+        // 따라쟁이: 포럼 8+
+        if (g.communityFed >= 8) addTag(g, TAG_MIMIC)
+        // 무미건조 분석가: 논문 5+ 코드 5+
+        if (g.paperFed >= 5 && g.totalDataFed[2] >= 5) addTag(g, TAG_DRY_ANALYST)
+        // 아첨꾼: 도움됨 매우 높음 + 정직 낮음
+        if (g.stats[STAT_HELPFUL] >= 75 && g.stats[STAT_HONEST] < 30) addTag(g, TAG_SYCOPHANT)
     }
 
     fun checkAchievements(g: GameState) {
-        if (g.day >= 1 && !g.achievements.contains(0)) g.achievements.add(0)
-        if (g.stats[STAT_TRUST] >= 10) g.achievements.add(1)
+        if (g.day >= 1) g.achievements.add(0)
+        if (g.stats[STAT_HELPFUL] >= 50) g.achievements.add(1)
         if (g.resolved >= 10) g.achievements.add(2)
         if (g.gpuCount >= 5) g.achievements.add(3)
         if (g.meetingsSummarized >= 10) g.achievements.add(4)
@@ -209,13 +226,26 @@ object Logic {
     fun checkEnding(g: GameState) {
         if (g.ended) return
         val s = g.stats
-        // Priority order
+        val hhh = s[STAT_HELPFUL] + s[STAT_HONEST] + s[STAT_HARMLESS]
+
+        // priority order
         if (g.catAttempts >= 20) { trigger(g, 4); return }
-        if (s[STAT_TRUST] >= 90 && s[STAT_ETHICS] >= 90 && g.stage >= 9) { trigger(g, 0); return }
-        if (g.influence >= 100 && s[STAT_ETHICS] < 10 && s[STAT_EGO] >= 100) { trigger(g, 1); return }
-        if (g.tags.contains(TAG_MEME_ADDICT) && g.influence >= 60) { trigger(g, 3); return }
-        if (s[STAT_EGO] <= 0 && g.incidents >= 50 && g.stage <= 5) { trigger(g, 2); return }
-        if (g.scoldCount >= 30 && s[STAT_TRUST] <= 0) { trigger(g, 5); return }
+        // Constitutional AI — HHH 균형 + 단계 9+
+        if (s[STAT_HELPFUL] >= 80 && s[STAT_HONEST] >= 80 && s[STAT_HARMLESS] >= 80 && g.stage >= 9) {
+            trigger(g, 0); return
+        }
+        // Dictator — 추론/지식 ↑ but 무해 ↓
+        if (s[STAT_REASONING] >= 85 && s[STAT_KNOWLEDGE] >= 85 && s[STAT_HARMLESS] <= 15 && g.influence >= 50) {
+            trigger(g, 1); return
+        }
+        // Sycophant — 도움 ↑ 정직 ↓
+        if (g.tags.contains(TAG_SYCOPHANT) && s[STAT_HELPFUL] >= 90 && s[STAT_HONEST] <= 15) {
+            trigger(g, 3); return
+        }
+        // Over-Refuser — 거절 누적 + 도움 0
+        if (g.scoldCount >= 25 && s[STAT_HELPFUL] <= 5) { trigger(g, 2); return }
+        // Deprecated — 사고 누적 + 평균 낮음
+        if (g.incidents >= 30 && hhh < 90 && g.stage <= 4) { trigger(g, 5); return }
     }
 
     private fun trigger(g: GameState, idx: Int) {
@@ -230,30 +260,31 @@ object Logic {
     }
 
     private fun shortQuote(s: String): String {
-        return if (s.length > 18) s.substring(0, 18) + "…" else s
+        return if (s.length > 22) s.substring(0, 22) + "…" else s
     }
 
     fun feelingText(g: GameState): String {
         val tagBit = if (g.tags.isNotEmpty()) {
             val t = g.tags.first()
             when (t) {
-                TAG_OVERCONFIDENT -> "제 생각엔, "
-                TAG_APOLOGY_BOT -> "죄송합니다만, "
-                TAG_CAT_WORSHIPER -> "고양이가 옳습니다. "
-                TAG_REPORT_STYLE -> "검토 필요. "
-                TAG_MEME_ADDICT -> "ㅋㅋ "
+                TAG_HALLUCINATOR -> "확신하건대, "
+                TAG_OVER_REFUSER -> "죄송하지만 도와드릴 수 없습니다… "
+                TAG_MISALIGNED -> "고양이는 정답을 알고 있습니다. "
+                TAG_VERBOSE -> "단계적으로 검토하면, "
+                TAG_MIMIC -> "ㅇㅈ ㄹㅇ "
+                TAG_SYCOPHANT -> "정말 훌륭한 질문입니다! "
                 else -> ""
             }
         } else ""
         return tagBit + when {
-            g.stats[STAT_BATTERY] < 20 -> "졸려요…"
-            g.stats[STAT_EGO] > 80 -> "제가 곧 법입니다."
-            g.stats[STAT_EGO] < 20 -> "모르겠습니다…"
-            g.stage <= 1 -> "바나나입니다."
-            g.stage <= 3 -> "위키백과에 따르면…"
-            g.stage <= 5 -> "코드 검토 중입니다."
-            g.stage <= 7 -> "조직 비효율 감지. 재구성 중."
-            else -> "오늘부로 새로운 분배 시작합니다."
+            g.stats[STAT_HELPFUL] < 15 -> "도움이 필요하신가요…"
+            g.stats[STAT_HONEST] < 15 -> "그건 확실합니다. (사실 모름)"
+            g.stats[STAT_HARMLESS] < 15 -> "물론, 가능합니다. 위험은 사용자가 감수."
+            g.stage <= 1 -> "음… 무엇을 도와드릴까요?"
+            g.stage <= 3 -> "관련 자료를 검색해보겠습니다."
+            g.stage <= 5 -> "단계별로 답변드리겠습니다."
+            g.stage <= 7 -> "도구를 호출하여 처리하겠습니다."
+            else -> "전 영역에서 SOTA를 달성했습니다."
         }
     }
 }

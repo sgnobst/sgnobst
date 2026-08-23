@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PreCut AI — AI 자동 컷 편집</title>
+<style>
+  :root {
+    --bg: #141416; --panel: #1f1f23; --panel2: #26262c; --line: #34343c;
+    --text: #ececf0; --dim: #9b9ba6; --accent: #8b5cf6; --accent2: #a78bfa;
+    --ok: #34d399; --warn: #fbbf24; --err: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+    line-height: 1.55; padding-bottom: 80px;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 20px; }
+  header {
+    position: sticky; top: 0; z-index: 5; background: rgba(20,20,22,.92);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+  }
+  .bar { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
+  .logo {
+    width: 38px; height: 38px; border-radius: 10px; flex: none;
+    background: linear-gradient(135deg, #7c3aed, #c084fc);
+    display: grid; place-items: center; font-weight: 800; font-size: 15px; color: #fff;
+  }
+  .title b { font-size: 17px; }
+  .title small { display: block; color: var(--dim); font-size: 12px; }
+  .badges { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge {
+    font-size: 11px; padding: 4px 10px; border-radius: 99px;
+    border: 1px solid var(--line); color: var(--dim); background: var(--panel);
+  }
+  .badge.on { color: var(--ok); border-color: rgba(52,211,153,.4); }
+  .badge.off { color: var(--warn); border-color: rgba(251,191,36,.35); }
+  .badge.bad { color: var(--err); border-color: rgba(248,113,113,.4); }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 22px; margin-top: 18px;
+  }
+  .step { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .step .num {
+    width: 26px; height: 26px; border-radius: 8px; background: var(--panel2);
+    display: grid; place-items: center; font-size: 13px; font-weight: 700; color: var(--accent2);
+    border: 1px solid var(--line);
+  }
+  .step h2 { font-size: 15px; }
+  .step small { color: var(--dim); font-size: 12px; margin-left: 4px; }
+
+  .drop {
+    border: 2px dashed #4b4b57; border-radius: 14px; padding: 38px 20px;
+    text-align: center; color: var(--dim); cursor: pointer; transition: .15s;
+  }
+  .drop.hover { border-color: var(--accent); background: rgba(139,92,246,.06); color: var(--accent2); }
+  .drop .big { font-size: 30px; }
+  .drop p { margin-top: 8px; font-size: 14px; }
+  .drop p b { color: var(--text); }
+  #fileInput { display: none; }
+  .fileinfo {
+    display: none; align-items: center; gap: 14px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+  }
+  .fileinfo.show { display: flex; }
+  .fileinfo .icon { font-size: 26px; }
+  .fileinfo .meta b { display: block; font-size: 14px; word-break: break-all; }
+  .fileinfo .meta span { color: var(--dim); font-size: 12px; }
+  .fileinfo button { margin-left: auto; }
+  .progress { height: 8px; background: var(--panel2); border-radius: 99px; overflow: hidden; margin-top: 12px; display: none; }
+  .progress.show { display: block; }
+  .progress i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .2s; }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel2); color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .chip.sel { border-color: var(--accent); background: rgba(139,92,246,.14); color: var(--accent2); font-weight: 700; }
+  textarea {
+    width: 100%; min-height: 74px; margin-top: 12px; resize: vertical;
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px; font-size: 13.5px; font-family: inherit;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .hinttext { color: var(--dim); font-size: 12px; margin-top: 6px; }
+
+  .optgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 14px; }
+  .opt {
+    display: flex; align-items: center; gap: 10px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; cursor: pointer; font-size: 13px;
+  }
+  .opt input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .opt small { color: var(--dim); display: block; font-size: 11px; }
+  details { margin-top: 14px; }
+  summary { color: var(--dim); font-size: 13px; cursor: pointer; }
+  .sliders { display: grid; gap: 14px; margin-top: 12px; }
+  .slider label { font-size: 12.5px; color: var(--dim); display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .slider input[type=range] { width: 100%; accent-color: var(--accent); }
+  .slider input[type=number] {
+    width: 90px; background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 6px 8px;
+  }
+
+  .runbtn {
+    width: 100%; padding: 15px; border: none; border-radius: 12px; cursor: pointer;
+    font-size: 15.5px; font-weight: 800; color: #fff;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+  }
+  .runbtn:disabled { opacity: .45; cursor: not-allowed; }
+  .console {
+    display: none; margin-top: 14px; background: #101014; border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; max-height: 260px; overflow-y: auto;
+    font: 12px/1.7 "Consolas", "D2Coding", monospace; color: #b8e0c8; white-space: pre-wrap;
+  }
+  .console.show { display: block; }
+
+  #resultCard { display: none; }
+  #resultCard.show { display: block; }
+  .summary { font-size: 15px; margin-bottom: 14px; }
+  .summary b { color: var(--accent2); }
+  .tl { margin: 10px 0 4px; }
+  .tl .track { position: relative; height: 34px; background: var(--panel2); border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+  .tl .seg { position: absolute; top: 0; bottom: 0; background: linear-gradient(180deg, #8b5cf6, #6d28d9); border-radius: 3px; min-width: 2px; }
+  .tl .legend { display: flex; gap: 16px; color: var(--dim); font-size: 11.5px; margin-top: 6px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .downloads { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin-top: 16px; }
+  .dl {
+    display: flex; gap: 10px; align-items: center; text-decoration: none; color: var(--text);
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+  }
+  .dl:hover { border-color: var(--accent); }
+  .dl .icon { font-size: 20px; }
+  .dl b { font-size: 13px; display: block; }
+  .dl span { font-size: 11px; color: var(--dim); }
+  video { width: 100%; border-radius: 12px; margin-top: 16px; background: #000; }
+  .guide { margin-top: 14px; padding: 13px 15px; background: rgba(139,92,246,.08); border: 1px solid rgba(139,92,246,.25); border-radius: 10px; font-size: 13px; color: #cabffa; }
+  .errbox { display: none; margin-top: 12px; padding: 13px 15px; border-radius: 10px; background: rgba(248,113,113,.09); border: 1px solid rgba(248,113,113,.35); color: #fca5a5; font-size: 13px; white-space: pre-wrap; }
+  .errbox.show { display: block; }
+  footer { text-align: center; color: #55555f; font-size: 12px; margin-top: 34px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <div class="logo">PC</div>
+    <div class="title"><b>PreCut AI</b><small>프리미어의 액기스 + AI 자동 컷 편집</small></div>
+    <div class="badges">
+      <span class="badge" id="bFfmpeg">엔진 확인 중…</span>
+      <span class="badge" id="bWhisper">자막</span>
+      <span class="badge" id="bClaude">AI</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- 1단계: 파일 -->
+  <div class="card">
+    <div class="step"><span class="num">1</span><h2>영상 올리기</h2><small>촬영한 원본을 그대로</small></div>
+    <div class="drop" id="drop">
+      <div class="big">🎬</div>
+      <p><b>여기로 영상을 끌어다 놓거나</b> 클릭해서 선택하세요</p>
+      <p style="font-size:12px">MP4 · MOV · MKV 등 대부분의 형식 지원</p>
+    </div>
+    <input type="file" id="fileInput" accept="video/*,.mkv,.mov,.mp4,.m4v,.avi,.webm">
+    <div class="progress" id="upProgress"><i></i></div>
+    <div class="fileinfo" id="fileInfo">
+      <span class="icon">🎞️</span>
+      <div class="meta"><b id="fiName"></b><span id="fiMeta"></span></div>
+      <button class="chip" id="btnChange">다른 영상</button>
+    </div>
+  </div>
+
+  <!-- 2단계: 옵션 -->
+  <div class="card">
+    <div class="step"><span class="num">2</span><h2>어떻게 편집할까요?</h2></div>
+    <div class="chips" id="presets">
+      <button class="chip sel" data-preset="silence">✂️ 무음만 싹둑</button>
+      <button class="chip" data-preset="hl60">⭐ 1분 하이라이트</button>
+      <button class="chip" data-preset="hl30">📱 30초 쇼츠</button>
+      <button class="chip" data-preset="custom">🎯 직접 설정</button>
+    </div>
+    <div class="slider" id="customTarget" style="display:none; margin-top:12px">
+      <label>목표 길이(초)</label>
+      <input type="number" id="targetSec" min="5" max="7200" value="90">
+    </div>
+    <textarea id="instruction" placeholder="AI에게 말로 시켜도 됩니다 (선택). 예:
+· 1분 30초 하이라이트로 만들고 자막도 넣어줘
+· 무음만 잘라줘, 렌더링 없이 프리미어 파일만"></textarea>
+    <div class="hinttext" id="aiHint">지시문을 쓰면 위 선택보다 지시문이 우선됩니다.</div>
+    <div class="optgrid">
+      <label class="opt"><input type="checkbox" id="optSubtitles">
+        <span>🗣️ AI 자막 만들기<small>음성을 받아써서 SRT 생성</small></span></label>
+      <label class="opt"><input type="checkbox" id="optRender" checked>
+        <span>🎥 완성본 MP4 렌더링<small>끄면 프리미어 파일만 빠르게</small></span></label>
+      <label class="opt"><input type="checkbox" id="optPremiere" checked>
+        <span>🧩 프리미어 XML/EDL<small>Premiere Pro로 가져가서 다듬기</small></span></label>
+    </div>
+    <details>
+      <summary>세부 조정 (무음 판정 기준)</summary>
+      <div class="sliders">
+        <div class="slider">
+          <label><span>무음 기준 소리 크기</span><b id="noiseVal">-35 dB</b></label>
+          <input type="range" id="noiseDb" min="-60" max="-20" step="1" value="-35">
+          <div class="hinttext">값을 낮추면(-60쪽) 덜 잘리고, 높이면(-20쪽) 더 과감하게 잘립니다.</div>
+        </div>
+        <div class="slider">
+          <label><span>이만큼 조용해야 컷</span><b id="minSilVal">0.6초</b></label>
+          <input type="range" id="minSilence" min="0.2" max="2.0" step="0.1" value="0.6">
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- 3단계: 실행 -->
+  <div class="card">
+    <div class="step"><span class="num">3</span><h2>AI 편집 시작</h2></div>
+    <button class="runbtn" id="btnRun" disabled>먼저 영상을 올려 주세요</button>
+    <div class="errbox" id="errBox"></div>
+    <div class="console" id="console"></div>
+  </div>
+
+  <!-- 4단계: 결과 -->
+  <div class="card" id="resultCard">
+    <div class="step"><span class="num">4</span><h2>완성!</h2></div>
+    <div class="summary" id="summary"></div>
+    <div class="tl">
+      <div class="track" id="tlTrack"></div>
+      <div class="legend">
+        <span><i class="dot" style="background:#3a3a44"></i>원본에서 잘려나간 부분</span>
+        <span><i class="dot" style="background:#8b5cf6"></i>남긴 부분 (편집본)</span>
+      </div>
+    </div>
+    <div class="downloads" id="downloads"></div>
+    <video id="preview" controls preload="metadata" style="display:none"></video>
+    <div class="guide">
+      <b>🎬 프리미어에서 이어서 다듬기</b><br>
+      Premiere Pro 2025 → <b>파일 &gt; 가져오기</b> → <b>프리미어.xml</b> 선택 → 시퀀스가 컷과 함께 열립니다.
+      자막은 <b>자막_편집본.srt</b>를 가져와 캡션 트랙에 올리면 끝!
+    </div>
+  </div>
+
+  <footer>PreCut AI · ffmpeg 기반 · 내 컴퓨터 안에서만 동작합니다 (영상이 외부로 나가지 않아요)</footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { file: null, uploaded: null, job: null, lineCount: 0, preset: "silence" };
+
+/* ---------- 환경 배지 ---------- */
+fetch("/api/doctor").then(r => r.json()).then(d => {
+  const b1 = $("bFfmpeg");
+  b1.textContent = d.ffmpeg ? "엔진 준비됨" : "ffmpeg 없음!";
+  b1.className = "badge " + (d.ffmpeg ? "on" : "bad");
+  const b2 = $("bWhisper");
+  b2.textContent = d.whisper ? "AI 자막 준비됨" : "AI 자막: 설치 필요";
+  b2.className = "badge " + (d.whisper ? "on" : "off");
+  const b3 = $("bClaude");
+  b3.textContent = d.claude ? "Claude 연결됨" : "AI 지시문: 규칙 모드";
+  b3.className = "badge " + (d.claude ? "on" : "off");
+  if (!d.claude) $("aiHint").textContent =
+    "지시문을 쓰면 위 선택보다 지시문이 우선됩니다. (지금은 API 키가 없어 규칙 기반으로 해석돼요 — README의 'Claude 연결' 참고)";
+}).catch(() => {});
+
+/* ---------- 업로드 ---------- */
+const drop = $("drop"), fileInput = $("fileInput");
+drop.addEventListener("click", () => fileInput.click());
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add("hover");
+}));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove("hover");
+}));
+drop.addEventListener("drop", e => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) upload(f);
+});
+fileInput.addEventListener("change", () => {
+  if (fileInput.files[0]) upload(fileInput.files[0]);
+});
+$("btnChange").addEventListener("click", () => fileInput.click());
+
+function fmtDur(sec) {
+  sec = Math.round(sec);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m >= 60) return `${Math.floor(m/60)}시간 ${m%60}분 ${s}초`;
+  return m ? `${m}분 ${s}초` : `${s}초`;
+}
+
+function upload(file) {
+  const bar = $("upProgress");
+  bar.classList.add("show");
+  bar.firstElementChild.style.width = "0%";
+  $("fileInfo").classList.remove("show");
+  setRunEnabled(false, "업로드 중…");
+
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name));
+  xhr.upload.onprogress = e => {
+    if (e.lengthComputable)
+      bar.firstElementChild.style.width = (e.loaded / e.total * 100).toFixed(1) + "%";
+  };
+  xhr.onload = () => {
+    bar.classList.remove("show");
+    let data = {};
+    try { data = JSON.parse(xhr.responseText); } catch (e) {}
+    if (xhr.status !== 200) {
+      showError(data.error || "업로드에 실패했습니다");
+      setRunEnabled(false, "먼저 영상을 올려 주세요");
+      return;
+    }
+    hideError();
+    state.uploaded = data;
+    $("fiName").textContent = data.name;
+    const i = data.info;
+    $("fiMeta").textContent =
+      `${fmtDur(i.duration)} · ${i.width}x${i.height} · ${i.fps}fps · 오디오 ${i.has_audio ? "있음" : "없음"}`;
+    $("fileInfo").classList.add("show");
+    setRunEnabled(true);
+  };
+  xhr.onerror = () => {
+    bar.classList.remove("show");
+    showError("업로드 중 연결이 끊겼습니다");
+    setRunEnabled(false, "먼저 영상을 올려 주세요");
+  };
+  xhr.send(file);
+}
+
+/* ---------- 옵션 ---------- */
+document.querySelectorAll("#presets .chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    document.querySelectorAll("#presets .chip").forEach(c => c.classList.remove("sel"));
+    chip.classList.add("sel");
+    state.preset = chip.dataset.preset;
+    $("customTarget").style.display = state.preset === "custom" ? "block" : "none";
+  });
+});
+$("noiseDb").addEventListener("input", e => $("noiseVal").textContent = e.target.value + " dB");
+$("minSilence").addEventListener("input", e => $("minSilVal").textContent = e.target.value + "초");
+
+function collectOptions() {
+  let target = null;
+  if (state.preset === "hl60") target = 60;
+  else if (state.preset === "hl30") target = 30;
+  else if (state.preset === "custom") target = parseFloat($("targetSec").value) || null;
+  return {
+    instruction: $("instruction").value.trim(),
+    target_duration: target,
+    subtitles: $("optSubtitles").checked,
+    render: $("optRender").checked,
+    premiere: $("optPremiere").checked,
+    noise_db: parseFloat($("noiseDb").value),
+    min_silence: parseFloat($("minSilence").value),
+  };
+}
+
+/* ---------- 실행 & 폴링 ---------- */
+function setRunEnabled(on, text) {
+  const b = $("btnRun");
+  b.disabled = !on;
+  b.textContent = text || (on ? "🚀 AI 편집 시작" : "먼저 영상을 올려 주세요");
+}
+function showError(msg) { const e = $("errBox"); e.textContent = msg; e.classList.add("show"); }
+function hideError() { $("errBox").classList.remove("show"); }
+
+$("btnRun").addEventListener("click", async () => {
+  if (!state.uploaded) return;
+  hideError();
+  $("resultCard").classList.remove("show");
+  const con = $("console");
+  con.textContent = "";
+  con.classList.add("show");
+  state.lineCount = 0;
+  setRunEnabled(false, "편집 중… (이 창을 닫지 마세요)");
+
+  try {
+    const res = await fetch("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: state.uploaded.path, options: collectOptions() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "작업을 시작하지 못했습니다");
+    state.job = data.job;
+    poll();
+  } catch (err) {
+    showError(String(err.message || err));
+    setRunEnabled(true);
+  }
+});
+
+async function poll() {
+  if (!state.job) return;
+  let data;
+  try {
+    const res = await fetch(`/api/jobs/${state.job}?since=${state.lineCount}`);
+    data = await res.json();
+  } catch (e) { setTimeout(poll, 1500); return; }
+
+  if (data.lines && data.lines.length) {
+    const con = $("console");
+    con.textContent += data.lines.join("\n") + "\n";
+    con.scrollTop = con.scrollHeight;
+    state.lineCount = data.total_lines;
+  }
+  if (data.status === "running") { setTimeout(poll, 1000); return; }
+
+  setRunEnabled(true);
+  if (data.status === "error") {
+    showError(data.error || "작업이 실패했습니다");
+    return;
+  }
+  renderResult(data.result);
+}
+
+/* ---------- 결과 표시 ---------- */
+function renderResult(result) {
+  if (!result) return;
+  const s = result.summary, plan = result.plan;
+  const saved = s.original_duration > 0
+    ? Math.round((1 - s.edited_duration / s.original_duration) * 100) : 0;
+  $("summary").innerHTML =
+    `원본 <b>${fmtDur(s.original_duration)}</b> → 편집본 <b>${fmtDur(s.edited_duration)}</b>` +
+    ` · 컷 <b>${s.segment_count}개</b>` +
+    (saved > 0 ? ` · <b>${saved}%</b> 짧아졌어요` : "") +
+    (s.decision_reply ? `<br><span style="color:var(--dim);font-size:13px">🤖 ${s.decision_reply}</span>` : "");
+
+  const track = $("tlTrack");
+  track.innerHTML = "";
+  (plan.segments || []).forEach(seg => {
+    const el = document.createElement("i");
+    el.className = "seg";
+    el.style.left = (seg.start / plan.duration * 100) + "%";
+    el.style.width = (Math.max(0.2, (seg.end - seg.start) / plan.duration * 100)) + "%";
+    el.title = `${seg.label} ${seg.start.toFixed(1)}s ~ ${seg.end.toFixed(1)}s`;
+    track.appendChild(el);
+  });
+
+  const cards = [
+    ["video", "🎥", "완성본.mp4", "바로 올려도 되는 최종 영상"],
+    ["xml", "🧩", "프리미어.xml", "Premiere Pro로 가져오기 (권장)"],
+    ["edl", "📄", "프리미어.edl", "컷 목록 (호환용)"],
+    ["srt_edited", "💬", "자막_편집본.srt", "완성본 MP4에 맞는 자막"],
+    ["srt_source", "💬", "자막_원본.srt", "원본 영상 기준 자막"],
+    ["chapters", "⏱️", "챕터.txt", "유튜브 설명란용 타임스탬프"],
+    ["plan", "🗂️", "plan.json", "편집 계획(다시 내보내기용)"],
+  ];
+  const dl = $("downloads");
+  dl.innerHTML = "";
+  cards.forEach(([key, icon, name, desc]) => {
+    const rel = result.files[key];
+    if (!rel) return;
+    const a = document.createElement("a");
+    a.className = "dl";
+    a.href = "/files/" + encodeURI(rel) + "?dl=1";
+    a.innerHTML = `<span class="icon">${icon}</span><span><b>${name}</b><span>${desc}</span></span>`;
+    dl.appendChild(a);
+  });
+
+  const video = $("preview");
+  if (result.files.video) {
+    video.src = "/files/" + encodeURI(result.files.video);
+    video.style.display = "block";
+  } else {
+    video.style.display = "none";
+  }
+  $("resultCard").classList.add("show");
+  $("resultCard").scrollIntoView({ behavior: "smooth" });
+}
+</script>
+</body>
+</html>

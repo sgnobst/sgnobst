@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "precut-ai"
+version = "0.1.0"
+description = "프리미어의 액기스만 뽑은 AI 자동 컷 편집기 — 무음 컷, 하이라이트, AI 자막, Premiere Pro 내보내기"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "sgnobst" }]
+keywords = ["video", "editing", "premiere", "ai", "ffmpeg", "whisper"]
+
+# 핵심 기능은 파이썬 표준 라이브러리 + ffmpeg만으로 동작한다.
+dependencies = []
+
+[project.optional-dependencies]
+subtitles = ["faster-whisper>=1.0"]
+assistant = ["anthropic>=1.0"]
+all = ["faster-whisper>=1.0", "anthropic>=1.0"]
+
+[project.scripts]
+precut = "precut.cli:main"
+
+[tool.setuptools]
+packages = ["precut"]
+
+[tool.setuptools.package-data]
+precut = ["static/*"]

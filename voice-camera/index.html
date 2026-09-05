@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voice Camera · 말하면 편집되는 카메라</title>
+<style>
+  :root {
+    --bg: #0b0b0f; --panel: rgba(20,20,28,.82); --fg: #f4f4f7; --muted: #9a9aa8;
+    --accent: #7c5cff; --ok: #35d07f; --warn: #ffb347; --danger: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Pretendard", "Noto Sans KR", system-ui, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; background: #000; }
+  canvas#view { max-width: 100vw; max-height: 100vh; width: auto; height: 100%; object-fit: contain; }
+  video { display: none; }
+
+  .top { position: fixed; top: 0; left: 0; right: 0; padding: 14px 16px;
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    background: linear-gradient(rgba(0,0,0,.6), transparent); pointer-events: none; }
+  .top > * { pointer-events: auto; }
+  .brand { font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+  @media (max-width: 480px) { .brand small { display: none; } }
+  .brand small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .pill { background: var(--panel); border: 1px solid rgba(255,255,255,.08); border-radius: 999px;
+    padding: 6px 12px; font-size: 13px; color: var(--muted); backdrop-filter: blur(10px); }
+  .pill.on { color: var(--ok); border-color: rgba(53,208,127,.5); }
+
+  .bottom { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 10px;
+    background: linear-gradient(transparent, rgba(0,0,0,.75)); }
+  #transcript { min-height: 46px; background: var(--panel); border-radius: 14px; padding: 10px 14px;
+    font-size: 16px; line-height: 1.4; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,.08); }
+  #transcript .interim { color: var(--muted); }
+  #transcript .final { color: var(--fg); }
+  #transcript .applied { color: var(--ok); font-size: 13px; display: block; margin-top: 3px; }
+  #transcript .unknown { color: var(--warn); font-size: 13px; display: block; margin-top: 3px; }
+
+  .controls { display: flex; align-items: center; justify-content: center; gap: 14px; }
+  button { appearance: none; border: 0; cursor: pointer; font: inherit; color: var(--fg); }
+  .round { width: 54px; height: 54px; border-radius: 50%; background: var(--panel);
+    border: 1px solid rgba(255,255,255,.12); display: grid; place-items: center; font-size: 22px; }
+  .mic { width: 76px; height: 76px; font-size: 30px; background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(124,92,255,.6); transition: box-shadow .3s; }
+  .mic.listening { animation: pulse 1.4s infinite; background: var(--danger); }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,92,108,.6);} 100% { box-shadow: 0 0 0 22px rgba(255,92,108,0);} }
+
+  .textrow { display: flex; gap: 8px; }
+  .textrow input { flex: 1; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: var(--panel);
+    color: var(--fg); padding: 10px 12px; font: inherit; }
+  .textrow button { border-radius: 12px; padding: 0 14px; background: var(--accent); }
+
+  #chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: 0 0 auto; background: rgba(255,255,255,.08); border-radius: 999px; padding: 6px 11px; font-size: 13px; }
+
+  #help { position: fixed; inset: 0; background: rgba(0,0,0,.85); backdrop-filter: blur(8px); overflow: auto;
+    padding: 24px 20px 40px; z-index: 20; }
+  #help h2 { margin: 0 0 12px; }
+  #help table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  #help td { padding: 7px 6px; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: top; }
+  #help td:first-child { color: var(--accent); white-space: nowrap; width: 34%; }
+  #help .close { position: sticky; top: 0; float: right; margin-left: 10px; }
+
+  #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 15; }
+  #timer { position: fixed; inset: 0; display: none; place-items: center; font-size: 120px; font-weight: 800;
+    text-shadow: 0 4px 30px rgba(0,0,0,.6); pointer-events: none; z-index: 12; }
+  #toast { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); background: var(--panel);
+    padding: 8px 14px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .25s; z-index: 18; }
+  #state { position: fixed; right: 12px; top: 56px; font-size: 11px; color: var(--muted); text-align: right;
+    line-height: 1.5; background: rgba(0,0,0,.35); padding: 6px 8px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="view"></canvas></div>
+<video id="cam" autoplay playsinline muted></video>
+<div id="flash"></div>
+<div id="timer"></div>
+<div id="toast"></div>
+
+<div class="top">
+  <div class="brand">🎙️ Voice Camera <small>말하면 편집됩니다</small></div>
+  <div style="display:flex;gap:8px">
+    <span id="micState" class="pill">마이크 꺼짐</span>
+    <button class="pill" id="helpBtn">명령어 ?</button>
+  </div>
+</div>
+<div id="state"></div>
+
+<div class="bottom">
+  <div id="transcript"><span class="interim">마이크 버튼을 누르고 "더 밝게", "흑백으로", "확대해줘" 처럼 말해보세요.</span></div>
+  <div id="chips"></div>
+  <div class="textrow">
+    <input id="textCmd" placeholder="음성이 안 되면 여기에 명령을 입력하세요 (예: 빈티지 필터)" autocomplete="off">
+    <button id="textGo">적용</button>
+  </div>
+  <div class="controls">
+    <button class="round" id="flipBtn" title="카메라 전환">🔄</button>
+    <button class="round mic" id="micBtn" title="음성 인식">🎤</button>
+    <button class="round" id="shotBtn" title="사진 촬영">📷</button>
+  </div>
+</div>
+
+<div id="help" hidden>
+  <button class="round close" id="helpClose">✕</button>
+  <h2>말할 수 있는 명령어</h2>
+  <p style="color:var(--muted);margin-top:0">"조금", "많이", "더" 로 강도를 조절하고, "2배", "50%" 같은 숫자도 인식합니다. 한 문장에 여러 명령을 이어 말해도 됩니다.</p>
+  <table id="helpTable"></table>
+</div>
+
+<script>
+/* ---------------- state ---------------- */
+const DEFAULT = {
+  brightness: 1, contrast: 1, saturate: 1, grayscale: 0, sepia: 0, blur: 0, hue: 0,
+  warmth: 0,      // -1(cool) ~ 1(warm)
+  zoom: 1, mirror: false, rotate: 0, vignette: 0, grain: 0, invert: 0, fade: 0,
+};
+let fx = { ...DEFAULT };
+let facing = 'user';
+let stream = null;
+let recognizing = false;
+let recognition = null;
+let grid = false;
+
+const video = document.getElementById('cam');
+const canvas = document.getElementById('view');
+const ctx = canvas.getContext('2d', { alpha: false });
+const transcriptEl = document.getElementById('transcript');
+const micBtn = document.getElementById('micBtn');
+const micState = document.getElementById('micState');
+
+/* ---------------- camera ---------------- */
+async function startCamera() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    fx.mirror = (facing === 'user');
+    toast(facing === 'user' ? '전면 카메라' : '후면 카메라');
+  } catch (e) {
+    toast('카메라를 열 수 없습니다: ' + e.message, 4000);
+  }
+}
+
+let noiseCanvas = null;
+function makeNoise(w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); const img = g.createImageData(w, h);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 128 + (Math.random() - .5) * 255;
+    img.data[i] = img.data[i+1] = img.data[i+2] = v; img.data[i+3] = 255;
+  }
+  g.putImageData(img, 0, 0); return c;
+}
+
+function render() {
+  requestAnimationFrame(render);
+  if (video.readyState < 2) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const swap = fx.rotate % 180 !== 0;
+  const cw = swap ? vh : vw, ch = swap ? vw : vh;
+  if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+
+  const warmHue = fx.warmth * -12;           // warm shifts toward orange, cool toward blue
+  const warmSat = 1 + Math.abs(fx.warmth) * .15;
+  ctx.filter = `brightness(${fx.brightness}) contrast(${fx.contrast}) saturate(${fx.saturate * warmSat})
+    grayscale(${fx.grayscale}) sepia(${fx.sepia + Math.max(0, fx.warmth) * .25}) blur(${fx.blur}px)
+    hue-rotate(${fx.hue + warmHue}deg) invert(${fx.invert})`;
+
+  ctx.save();
+  ctx.translate(cw / 2, ch / 2);
+  ctx.rotate(fx.rotate * Math.PI / 180);
+  ctx.scale(fx.mirror ? -fx.zoom : fx.zoom, fx.zoom);
+  ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
+  ctx.restore();
+  ctx.filter = 'none';
+
+  if (fx.warmth < 0) { // cool tint overlay
+    ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = `rgba(60,120,255,${-fx.warmth * .35})`;
+    ctx.fillRect(0, 0, cw, ch); ctx.globalCompositeOperation = 'source-over';
+  }
+  if (fx.fade > 0) { ctx.fillStyle = `rgba(245,240,230,${fx.fade * .25})`; ctx.fillRect(0, 0, cw, ch); }
+  if (fx.vignette > 0) {
+    const g = ctx.createRadialGradient(cw/2, ch/2, Math.min(cw,ch) * .35, cw/2, ch/2, Math.max(cw,ch) * .75);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${fx.vignette})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+  }
+  if (fx.grain > 0) {
+    if (!noiseCanvas || noiseCanvas.width !== 256) noiseCanvas = makeNoise(256, 256);
+    ctx.globalCompositeOperation = 'overlay'; ctx.globalAlpha = fx.grain * .6;
+    const ox = Math.random() * 256, oy = Math.random() * 256;
+    for (let y = -oy; y < ch; y += 256) for (let x = -ox; x < cw; x += 256) ctx.drawImage(noiseCanvas, x, y);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  }
+  if (grid) {
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1;
+    for (let i = 1; i < 3; i++) {
+      ctx.beginPath(); ctx.moveTo(cw * i / 3, 0); ctx.lineTo(cw * i / 3, ch); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, ch * i / 3); ctx.lineTo(cw, ch * i / 3); ctx.stroke();
+    }
+  }
+  updateState();
+}
+
+/* ---------------- command parsing ---------------- */
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// intensity from words: 조금/살짝 = 0.5, 많이/확/엄청 = 2, 더 = 1
+function intensity(t) {
+  if (/조금|살짝|약간|slightly|a bit|a little/.test(t)) return .5;
+  if (/많이|엄청|확\s|훨씬|왕창|much|a lot|way/.test(t)) return 2;
+  return 1;
+}
+function numberIn(t) {
+  const m = t.match(/(\d+(?:\.\d+)?)\s*(배|x|%|퍼센트|percent|도|deg)?/i);
+  if (!m) return null;
+  return { v: parseFloat(m[1]), unit: (m[2] || '').toLowerCase() };
+}
+const KO_NUM = { 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4, 다섯: 5 };
+
+const PRESETS = {
+  vintage: { sepia: .45, contrast: .9, saturate: .8, vignette: .5, grain: .35, fade: .5, warmth: .3 },
+  film:    { contrast: 1.1, saturate: .85, grain: .5, fade: .3, vignette: .35 },
+  bw:      { grayscale: 1, contrast: 1.15, grain: .25, vignette: .3 },
+  vivid:   { saturate: 1.6, contrast: 1.15, brightness: 1.05 },
+  soft:    { blur: 1.5, brightness: 1.08, contrast: .9, fade: .4 },
+  cinema:  { contrast: 1.2, saturate: .9, warmth: -.4, vignette: .45 },
+  dreamy:  { brightness: 1.15, blur: 2, saturate: 1.2, fade: .6 },
+  warm:    { warmth: .7 },
+  cool:    { warmth: -.7 },
+};
+
+// each rule: [regex, handler(text) -> description string]
+const RULES = [
+  [/(초기화|원래대로|리셋|되돌려|처음으로|다 지워|reset|clear)/, () => { fx = { ...DEFAULT, mirror: facing === 'user' }; grid = false; return '초기화'; }],
+
+  [/(빈티지|레트로|옛날|vintage|retro)/, () => applyPreset('vintage', '빈티지 필터')],
+  [/(필름|film)/, () => applyPreset('film', '필름 필터')],
+  [/(시네마|영화|cinema|cinematic)/, () => applyPreset('cinema', '시네마 톤')],
+  [/(몽환|드리미|dreamy)/, () => applyPreset('dreamy', '몽환 필터')],
+  [/(비비드|쨍하게|vivid|pop)/, () => applyPreset('vivid', '비비드')],
+  [/(소프트|부드럽게|soft)/, () => applyPreset('soft', '소프트')],
+  [/(컬러로|색깔로|칼라로|color)/, () => { fx.grayscale = 0; fx.sepia = 0; return '컬러로 복원'; }],
+  [/(흑백|모노|그레이|black and white|grayscale|mono)/, () => applyPreset('bw', '흑백')],
+  [/(세피아|sepia)/, t => { fx.sepia = clamp(fx.sepia + .5 * intensity(t), 0, 1); return `세피아 ${pct(fx.sepia)}`; }],
+
+  [/(따뜻|웜|노을|warm)/, t => { fx.warmth = clamp(fx.warmth + .4 * intensity(t), -1, 1); return `따뜻하게 ${fmt(fx.warmth)}`; }],
+  [/(차갑|시원|쿨|파랗|cool|cold)/, t => { fx.warmth = clamp(fx.warmth - .4 * intensity(t), -1, 1); return `차갑게 ${fmt(fx.warmth)}`; }],
+
+  [/(어둡|어두|darker|dim)/, t => { fx.brightness = clamp(fx.brightness - .15 * intensity(t), .2, 3); return `밝기 ${pct(fx.brightness)}`; }],
+  [/(밝|환하|bright|light)/, t => { const d = isDown(t) ? -1 : 1; fx.brightness = clamp(fx.brightness + d * .15 * intensity(t), .2, 3); return `밝기 ${pct(fx.brightness)}`; }],
+
+  [/(대비|콘트라스트|contrast)/, t => { const d = isDown(t) ? -1 : 1; fx.contrast = clamp(fx.contrast + d * .15 * intensity(t), .2, 3); return `대비 ${pct(fx.contrast)}`; }],
+  [/(채도|색감|색을|saturat)/, t => { const d = isDown(t) ? -1 : 1; fx.saturate = clamp(fx.saturate + d * .25 * intensity(t), 0, 4); return `채도 ${pct(fx.saturate)}`; }],
+  [/(선명|샤프|sharp|clear)/, () => { fx.blur = 0; fx.contrast = clamp(fx.contrast + .1, .2, 3); return '선명하게'; }],
+  [/(블러|뿌옇|흐리|흐릿|아웃포커스|blur|blurry)/, t => { if (isDown(t)) fx.blur = Math.max(0, fx.blur - 1.5); else fx.blur = clamp(fx.blur + 1.5 * intensity(t), 0, 12); return `블러 ${fx.blur.toFixed(1)}px`; }],
+  [/(색조|색상|휴|hue)/, t => { const n = numberIn(t); fx.hue = n ? n.v : (fx.hue + 30) % 360; return `색조 ${fx.hue}°`; }],
+  [/(반전|네거티브|invert|negative)/, () => { fx.invert = fx.invert ? 0 : 1; return fx.invert ? '색 반전' : '색 반전 해제'; }],
+  [/(비네팅|비네트|가장자리 어둡|vignette)/, t => { if (isDown(t)) fx.vignette = 0; else fx.vignette = clamp(fx.vignette + .3 * intensity(t), 0, 1); return `비네팅 ${pct(fx.vignette)}`; }],
+  [/(그레인|노이즈|입자|grain|noise)/, t => { if (isDown(t)) fx.grain = 0; else fx.grain = clamp(fx.grain + .3 * intensity(t), 0, 1); return `그레인 ${pct(fx.grain)}`; }],
+  [/(페이드|바래|fade|faded)/, t => { fx.fade = isDown(t) ? 0 : clamp(fx.fade + .3 * intensity(t), 0, 1); return `페이드 ${pct(fx.fade)}`; }],
+
+  [/(카메라 ?(전환|바꿔|돌려)|전면|후면|셀카|switch camera|front camera|back camera)/, t => {
+    facing = /후면|back/.test(t) ? 'environment' : /전면|셀카|front/.test(t) ? 'user' : (facing === 'user' ? 'environment' : 'user');
+    startCamera(); return '카메라 전환'; }],
+  [/(축소|줌 ?아웃|멀리|작게|zoom out|smaller)/, t => { fx.zoom = clamp(fx.zoom - .3 * intensity(t), 1, 5); return `줌 ${fx.zoom.toFixed(1)}x`; }],
+  [/(확대|줌|당겨|가까이|크게|zoom)/, t => {
+    const n = numberIn(t); let target = null;
+    if (n && n.unit === '배' || n && n.unit === 'x') target = n.v;
+    for (const k in KO_NUM) if (t.includes(k + ' 배') || t.includes(k + '배')) target = KO_NUM[k];
+    fx.zoom = clamp(target ?? fx.zoom + .3 * intensity(t), 1, 5); return `줌 ${fx.zoom.toFixed(1)}x`; }],
+  [/(좌우 ?반전|거울|미러|뒤집|mirror|flip)/, () => { fx.mirror = !fx.mirror; return fx.mirror ? '좌우반전 켬' : '좌우반전 끔'; }],
+  [/(회전|돌려|rotate)/, t => { const n = numberIn(t); fx.rotate = (fx.rotate + (n && n.unit !== '배' ? n.v : 90)) % 360; return `회전 ${fx.rotate}°`; }],
+  [/(격자|그리드|삼분할|grid)/, () => { grid = !grid; return grid ? '그리드 켬' : '그리드 끔'; }],
+
+  [/(타이머|초 ?뒤에|초 ?후에|timer)/, t => { const n = numberIn(t); shoot(n ? n.v : 3); return `${n ? n.v : 3}초 타이머`; }],
+  [/(사진|찍어|촬영|캡처|캡쳐|저장|셔터|치즈|김치|take|capture|shoot|snap|photo|cheese)/, () => { shoot(0); return '촬영' ; }],
+  [/(도움|명령어|뭐 할 수|help)/, () => { document.getElementById('help').hidden = false; return '도움말'; }],
+];
+const isDown = t => /(내려|낮춰|줄여|빼|덜|약하게|낮게|없애|끄|지워|down|lower|less|reduce|remove|off)/.test(t);
+const pct = v => Math.round(v * 100) + '%';
+const fmt = v => (v > 0 ? '+' : '') + v.toFixed(1);
+function applyPreset(name, label) {
+  const p = PRESETS[name]; for (const k in p) fx[k] = p[k]; return label;
+}
+
+// Split a sentence into clauses so "밝게 하고 흑백으로" applies both.
+function runCommand(raw) {
+  const text = raw.toLowerCase().trim();
+  if (!text) return [];
+  const clauses = text.split(/(?:\s*(?:하고|그리고|그다음|다음에|또|랑|and|then|,)\s*)/).filter(Boolean);
+  const applied = [];
+  for (const clause of clauses) {
+    let rest = clause;
+    for (const [re, fn] of RULES) {
+      const m = rest.match(re);
+      if (!m) continue;
+      applied.push(fn(clause));
+      rest = rest.replace(m[0], ' ');           // let the remainder match other rules
+      if (!rest.trim()) break;
+    }
+  }
+  return applied;
+}
+
+function handle(text, isFinal) {
+  if (!isFinal) { transcriptEl.innerHTML = `<span class="interim">${esc(text)}…</span>`; return; }
+  const results = runCommand(text);
+  const line = results.length
+    ? `<span class="applied">✓ ${esc(results.join(' · '))}</span>`
+    : `<span class="unknown">이해하지 못했어요. "명령어 ?"를 눌러 확인해보세요.</span>`;
+  transcriptEl.innerHTML = `<span class="final">"${esc(text)}"</span>${line}`;
+  if (results.length) toast(results.join(' · '));
+}
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+/* ---------------- speech ---------------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function setupSpeech() {
+  if (!SR) { micState.textContent = '이 브라우저는 음성 인식 미지원 (텍스트 입력 사용)'; micBtn.disabled = true; micBtn.style.opacity = .4; return; }
+  recognition = new SR();
+  recognition.lang = navigator.language.startsWith('ko') ? 'ko-KR' : navigator.language || 'ko-KR';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) handle(r[0].transcript, true); else interim += r[0].transcript;
+    }
+    if (interim) handle(interim, false);
+  };
+  recognition.onend = () => { if (recognizing) { try { recognition.start(); } catch (_) {} } else setMic(false); };
+  recognition.onerror = e => {
+    if (e.error === 'not-allowed') { toast('마이크 권한이 필요합니다', 3000); recognizing = false; setMic(false); }
+    else if (e.error !== 'no-speech' && e.error !== 'aborted') toast('음성 인식 오류: ' + e.error, 3000);
+  };
+}
+function setMic(on) {
+  recognizing = on;
+  micBtn.classList.toggle('listening', on);
+  micState.textContent = on ? '듣는 중 (' + recognition.lang + ')' : '마이크 꺼짐';
+  micState.classList.toggle('on', on);
+}
+micBtn.onclick = () => {
+  if (!recognition) return;
+  if (recognizing) { recognizing = false; recognition.stop(); setMic(false); }
+  else { try { recognition.start(); setMic(true); } catch (e) { toast('시작 실패: ' + e.message); } }
+};
+
+/* ---------------- capture ---------------- */
+function shoot(delay) {
+  const timerEl = document.getElementById('timer');
+  let n = Math.round(delay);
+  const tick = () => {
+    if (n <= 0) { timerEl.style.display = 'none'; snap(); return; }
+    timerEl.style.display = 'grid'; timerEl.textContent = n; n--; setTimeout(tick, 1000);
+  };
+  tick();
+}
+function snap() {
+  const flash = document.getElementById('flash');
+  flash.style.opacity = .9; setTimeout(() => flash.style.opacity = 0, 120);
+  canvas.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `voice-camera-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }, 'image/jpeg', .92);
+}
+
+/* ---------------- UI ---------------- */
+let toastTimer;
+function toast(msg, ms = 1600) {
+  const t = document.getElementById('toast'); t.textContent = msg; t.style.opacity = 1;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.opacity = 0, ms);
+}
+function updateState() {
+  const diff = Object.keys(DEFAULT).filter(k => k !== 'mirror' && fx[k] !== DEFAULT[k])
+    .map(k => `${k}: ${typeof fx[k] === 'number' ? +fx[k].toFixed(2) : fx[k]}`);
+  document.getElementById('state').innerHTML = diff.length ? diff.join('<br>') : '';
+}
+document.getElementById('shotBtn').onclick = () => shoot(0);
+document.getElementById('flipBtn').onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; startCamera(); };
+document.getElementById('helpBtn').onclick = () => document.getElementById('help').hidden = false;
+document.getElementById('helpClose').onclick = () => document.getElementById('help').hidden = true;
+const textCmd = document.getElementById('textCmd');
+const goText = () => { if (textCmd.value.trim()) { handle(textCmd.value, true); textCmd.value = ''; } };
+document.getElementById('textGo').onclick = goText;
+textCmd.addEventListener('keydown', e => { if (e.key === 'Enter') goText(); });
+
+const QUICK = ['더 밝게', '어둡게', '흑백으로', '빈티지 필터', '따뜻하게', '차갑게', '시네마 톤', '확대해줘', '2배 줌', '축소', '블러', '선명하게', '비네팅', '그레인 추가', '좌우반전', '회전', '그리드', '카메라 전환', '3초 뒤에 찍어', '사진 찍어', '초기화'];
+document.getElementById('chips').innerHTML = QUICK.map(q => `<button class="chip">${q}</button>`).join('');
+document.querySelectorAll('.chip').forEach(b => b.onclick = () => handle(b.textContent, true));
+
+const HELP = [
+  ['더 밝게 / 어둡게', '밝기 조절 (조금·많이로 강도)'],
+  ['대비 올려 / 대비 내려', '대비 조절'],
+  ['채도 올려 / 색감 연하게', '채도 조절'],
+  ['흑백으로 / 컬러로', '흑백 전환 및 복원'],
+  ['빈티지 · 필름 · 시네마 · 몽환 · 비비드 · 소프트', '프리셋 필터'],
+  ['따뜻하게 / 차갑게', '색온도'],
+  ['세피아', '세피아 톤'],
+  ['블러 / 선명하게', '흐림 효과 및 해제'],
+  ['비네팅 / 비네팅 빼', '가장자리 어둡게'],
+  ['그레인 추가 / 노이즈 없애', '필름 입자'],
+  ['페이드', '빛바랜 느낌'],
+  ['색조 90', '색상 회전(hue)'],
+  ['반전', '네거티브 색 반전 토글'],
+  ['확대 / 축소 / 2배 줌', '줌 (최대 5배)'],
+  ['좌우반전 / 거울', '미러 토글'],
+  ['회전 / 180도 회전', '시계 방향 회전'],
+  ['그리드', '삼분할 격자 토글'],
+  ['카메라 전환 / 후면 카메라', '전·후면 전환'],
+  ['사진 찍어 / 치즈 / 김치', '현재 편집 상태로 저장'],
+  ['3초 뒤에 찍어', '타이머 촬영'],
+  ['초기화 / 원래대로', '모든 효과 제거'],
+];
+document.getElementById('helpTable').innerHTML = HELP.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('');
+
+/* ---------------- boot ---------------- */
+setupSpeech();
+startCamera().then(() => requestAnimationFrame(render));
+</script>
+</body>
+</html>
